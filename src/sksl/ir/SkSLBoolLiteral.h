@@ -14,15 +14,27 @@
 namespace SkSL {
 
 /**
- * Represents 'true' or 'false'.
+ * Represents 'true' or 'false'. These are generally referred to as BoolLiteral, but Literal<bool>
+ * is also available for use with template code.
  */
-struct BoolLiteral : public Expression {
-    BoolLiteral(const Context& context, int offset, bool value)
-    : INHERITED(offset, kBoolLiteral_Kind, *context.fBool_Type)
-    , fValue(value) {}
+template <typename T> class Literal;
+using BoolLiteral = Literal<bool>;
+
+template <>
+class Literal<bool> final : public Expression {
+public:
+    static constexpr Kind kExpressionKind = Kind::kBoolLiteral;
+
+    Literal(const Context& context, int offset, bool value)
+        : INHERITED(offset, kExpressionKind, context.fBool_Type.get())
+        , fValue(value) {}
+
+    bool value() const {
+        return fValue;
+    }
 
     String description() const override {
-        return String(fValue ? "true" : "false");
+        return String(this->value() ? "true" : "false");
     }
 
     bool hasProperty(Property property) const override {
@@ -34,28 +46,24 @@ struct BoolLiteral : public Expression {
     }
 
     bool compareConstant(const Context& context, const Expression& other) const override {
-        BoolLiteral& b = (BoolLiteral&) other;
-        return fValue == b.fValue;
-    }
-
-    int nodeCount() const override {
-        return 1;
+        const BoolLiteral& b = other.as<BoolLiteral>();
+        return this->value() == b.value();
     }
 
     std::unique_ptr<Expression> clone() const override {
-        return std::unique_ptr<Expression>(new BoolLiteral(fOffset, fValue, &fType));
+        return std::unique_ptr<BoolLiteral>(new BoolLiteral(fOffset, this->value(), &this->type()));
     }
 
-    const bool fValue;
-
-    typedef Expression INHERITED;
-
 private:
-    BoolLiteral(int offset, bool value, const Type* type)
-    : INHERITED(offset, kBoolLiteral_Kind, *type)
-    , fValue(value) {}
+    Literal(int offset, bool value, const Type* type)
+        : INHERITED(offset, kExpressionKind, type)
+        , fValue(value) {}
+
+    bool fValue;
+
+    using INHERITED = Expression;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

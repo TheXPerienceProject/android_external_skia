@@ -9,10 +9,10 @@
 #include "src/gpu/GrTextureProxyPriv.h"
 
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrDeferredProxyUploader.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrProxyProvider.h"
-#include "src/gpu/GrSurfacePriv.h"
+#include "src/gpu/GrSurface.h"
 #include "src/gpu/GrTexture.h"
 
 // Deferred version - no data
@@ -142,9 +142,10 @@ GrMipmapped GrTextureProxy::mipmapped() const {
     return fMipmapped;
 }
 
-size_t GrTextureProxy::onUninstantiatedGpuMemorySize(const GrCaps& caps) const {
-    return GrSurface::ComputeSize(caps, this->backendFormat(), this->dimensions(), 1,
-                                  this->proxyMipmapped(), !this->priv().isExact());
+size_t GrTextureProxy::onUninstantiatedGpuMemorySize() const {
+    return GrSurface::ComputeSize(this->backendFormat(), this->dimensions(),
+                                  /*colorSamplesPerPixel=*/1, this->proxyMipmapped(),
+                                  !this->priv().isExact());
 }
 
 bool GrTextureProxy::ProxiesAreCompatibleAsDynamicState(const GrSurfaceProxy* first,
@@ -210,7 +211,7 @@ void GrTextureProxy::onValidateSurface(const GrSurface* surface) {
     SkASSERT(surface->asTexture()->textureType() == this->textureType());
 
     GrInternalSurfaceFlags proxyFlags = fSurfaceFlags;
-    GrInternalSurfaceFlags surfaceFlags = surface->surfacePriv().flags();
+    GrInternalSurfaceFlags surfaceFlags = surface->flags();
     SkASSERT(((int)proxyFlags & kGrInternalTextureFlagsMask) ==
              ((int)surfaceFlags & kGrInternalTextureFlagsMask));
 }

@@ -16,7 +16,7 @@
 #include "src/core/SkSpecialImage.h"
 #include "src/core/SkSpecialSurface.h"
 #include "src/gpu/GrBitmapTextureMaker.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrTextureProxy.h"
@@ -57,7 +57,7 @@ static SkBitmap create_bm() {
 
 // Basic test of the SkSpecialImage public API (e.g., peekTexture, peekPixels & draw)
 static void test_image(const sk_sp<SkSpecialImage>& img, skiatest::Reporter* reporter,
-                       GrContext* context, bool isGPUBacked) {
+                       GrRecordingContext* rContext, bool isGPUBacked) {
     const SkIRect subset = img->subset();
     REPORTER_ASSERT(reporter, kPad == subset.left());
     REPORTER_ASSERT(reporter, kPad == subset.top());
@@ -70,8 +70,8 @@ static void test_image(const sk_sp<SkSpecialImage>& img, skiatest::Reporter* rep
 
     //--------------
     // Test view - as long as there is a context this should succeed
-    if (context) {
-        GrSurfaceProxyView view = img->view(context);
+    if (rContext) {
+        GrSurfaceProxyView view = img->view(rContext);
         REPORTER_ASSERT(reporter, view.asTextureProxy());
     }
 

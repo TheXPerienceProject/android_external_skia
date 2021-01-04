@@ -16,11 +16,14 @@
 // "MAX_LINEARIZATION_ERROR" from the actual curve.
 constexpr static char kWangsFormulaCubicFn[] = R"(
         #define MAX_LINEARIZATION_ERROR 0.25  // 1/4 pixel
+        float length_pow2(vec2 v) {
+            return dot(v, v);
+        }
         float wangs_formula_cubic(vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
             float k = (3.0 * 2.0) / (8.0 * MAX_LINEARIZATION_ERROR);
-            float f = sqrt(k * length(max(abs(p2 - p1*2.0 + p0),
-                                          abs(p3 - p2*2.0 + p1))));
-            return max(1.0, ceil(f));
+            float m = max(length_pow2(-2.0*p1 + p2 + p0),
+                          length_pow2(-2.0*p2 + p3 + p1));
+            return max(1.0, ceil(sqrt(k * sqrt(m))));
         })";
 
 // Evaluate our point of interest using numerically stable mix() operations.
@@ -76,7 +79,7 @@ GrGLSLPrimitiveProcessor* GrStencilPathShader::createGLSLInstance(const GrShader
     return new Impl;
 }
 
-SkString GrTessellateCubicShader::getTessControlShaderGLSL(const GrGLSLPrimitiveProcessor*,
+SkString GrCubicTessellateShader::getTessControlShaderGLSL(const GrGLSLPrimitiveProcessor*,
                                                            const char* versionAndExtensionDecls,
                                                            const GrGLSLUniformHandler&,
                                                            const GrShaderCaps&) const {
@@ -118,7 +121,7 @@ SkString GrTessellateCubicShader::getTessControlShaderGLSL(const GrGLSLPrimitive
     return code;
 }
 
-SkString GrTessellateCubicShader::getTessEvaluationShaderGLSL(
+SkString GrCubicTessellateShader::getTessEvaluationShaderGLSL(
         const GrGLSLPrimitiveProcessor*, const char* versionAndExtensionDecls,
         const GrGLSLUniformHandler&, const GrShaderCaps&) const {
     SkString code(versionAndExtensionDecls);
@@ -151,7 +154,7 @@ SkString GrTessellateCubicShader::getTessEvaluationShaderGLSL(
     return code;
 }
 
-SkString GrTessellateWedgeShader::getTessControlShaderGLSL(const GrGLSLPrimitiveProcessor*,
+SkString GrWedgeTessellateShader::getTessControlShaderGLSL(const GrGLSLPrimitiveProcessor*,
                                                            const char* versionAndExtensionDecls,
                                                            const GrGLSLUniformHandler&,
                                                            const GrShaderCaps&) const {
@@ -189,7 +192,7 @@ SkString GrTessellateWedgeShader::getTessControlShaderGLSL(const GrGLSLPrimitive
     return code;
 }
 
-SkString GrTessellateWedgeShader::getTessEvaluationShaderGLSL(
+SkString GrWedgeTessellateShader::getTessEvaluationShaderGLSL(
         const GrGLSLPrimitiveProcessor*, const char* versionAndExtensionDecls,
         const GrGLSLUniformHandler&, const GrShaderCaps&) const {
     SkString code(versionAndExtensionDecls);
@@ -291,23 +294,18 @@ class GrMiddleOutCubicShader::Impl : public GrStencilPathShader::Impl {
     void onEmitCode(EmitArgs& args, GrGPArgs* gpArgs) override {
         const auto& shader = args.fGP.cast<GrMiddleOutCubicShader>();
         args.fVaryingHandler->emitAttributes(shader);
-        args.fVertBuilder->defineConstant("kMaxResolveLevel", kMaxResolveLevel);
+        args.fVertBuilder->defineConstantf("int", "kMaxVertexID", "%i", 1 << kMaxResolveLevel);
+        args.fVertBuilder->defineConstantf("float", "kInverseMaxVertexID", "exp2(-%i.0)",
+                                           kMaxResolveLevel);
         args.fVertBuilder->codeAppend(R"(
                 float4x2 P = float4x2(inputPoints_0_1, inputPoints_2_3);
                 float2 point;
-                if (sk_VertexID > (1 << kMaxResolveLevel)) {
+                if (sk_VertexID > kMaxVertexID) {
                     // This is a special index value that wants us to emit a specific point.
                     point = P[sk_VertexID & 3];
-                } else {)");
-        // Evaluate the cubic at T=(sk_VertexID / 2^kMaxResolveLevel).
-        if (args.fShaderCaps->fpManipulationSupport()) {
-            args.fVertBuilder->codeAppend(R"(
-                    float T = ldexp(sk_VertexID, -kMaxResolveLevel);)");
-        } else {
-            args.fVertBuilder->codeAppend(R"(
-                    float T = sk_VertexID / float(1 << kMaxResolveLevel);)");
-        }
-        args.fVertBuilder->codeAppend(R"(
+                } else {
+                    // Evaluate the cubic at T = (sk_VertexID / 2^kMaxResolveLevel).
+                    float T = sk_VertexID * kInverseMaxVertexID;
                     float2 ab = mix(P[0], P[1], T);
                     float2 bc = mix(P[1], P[2], T);
                     float2 cd = mix(P[2], P[3], T);

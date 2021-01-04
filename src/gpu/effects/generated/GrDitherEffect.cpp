@@ -10,6 +10,7 @@
  **************************************************************************************************/
 #include "GrDitherEffect.h"
 
+#include "src/core/SkUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -27,7 +28,7 @@ public:
         (void)range;
         rangeVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, kHalf_GrSLType,
                                                     "range");
-        SkString _sample302 = this->invokeChild(0, args);
+        SkString _sample0 = this->invokeChild(0, args);
         fragBuilder->codeAppendf(
                 R"SkSL(half4 color = %s;
 half value;
@@ -42,10 +43,9 @@ half value;
     bits.xz = abs(bits.xz - bits.yw);
     value = dot(bits, half4(0.5, 0.25, 0.125, 0.0625)) - 0.46875;
 }
-%s = half4(clamp(color.xyz + value * %s, 0.0, color.w), color.w);
+return half4(clamp(color.xyz + value * %s, 0.0, color.w), color.w);
 )SkSL",
-                _sample302.c_str(), args.fOutputColor,
-                args.fUniformHandler->getUniformCStr(rangeVar));
+                _sample0.c_str(), args.fUniformHandler->getUniformCStr(rangeVar));
     }
 
 private:
@@ -67,17 +67,21 @@ bool GrDitherEffect::onIsEqual(const GrFragmentProcessor& other) const {
     if (range != that.range) return false;
     return true;
 }
+bool GrDitherEffect::usesExplicitReturn() const { return true; }
 GrDitherEffect::GrDitherEffect(const GrDitherEffect& src)
         : INHERITED(kGrDitherEffect_ClassID, src.optimizationFlags()), range(src.range) {
     this->cloneAndRegisterAllChildProcessors(src);
 }
 std::unique_ptr<GrFragmentProcessor> GrDitherEffect::clone() const {
-    return std::unique_ptr<GrFragmentProcessor>(new GrDitherEffect(*this));
+    return std::make_unique<GrDitherEffect>(*this);
 }
+#if GR_TEST_UTILS
+SkString GrDitherEffect::onDumpInfo() const { return SkStringPrintf("(range=%f)", range); }
+#endif
 GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrDitherEffect);
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> GrDitherEffect::TestCreate(GrProcessorTestData* d) {
-    float range = d->fRandom->nextRangeF(0.0, 1.0);
+    float range = 1.0f - d->fRandom->nextRangeF(0.0f, 1.0f);
     return GrDitherEffect::Make(GrProcessorUnitTest::MakeChildFP(d), range);
 }
 #endif

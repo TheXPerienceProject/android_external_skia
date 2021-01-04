@@ -124,7 +124,7 @@ GrProcessorSet::Analysis GrDrawAtlasPathOp::finalize(const GrCaps& caps, const G
 }
 
 GrOp::CombineResult GrDrawAtlasPathOp::onCombineIfPossible(
-        GrOp* op, GrRecordingContext::Arenas* arenas, const GrCaps&) {
+        GrOp* op, SkArenaAlloc* alloc, const GrCaps&) {
     auto* that = op->cast<GrDrawAtlasPathOp>();
     SkASSERT(fAtlasProxy == that->fAtlasProxy);
     SkASSERT(fEnableHWAA == that->fEnableHWAA);
@@ -134,7 +134,7 @@ GrOp::CombineResult GrDrawAtlasPathOp::onCombineIfPossible(
     }
 
     SkASSERT(fUsesLocalCoords == that->fUsesLocalCoords);
-    auto* copy = arenas->recordTimeAllocator()->make<InstanceList>(that->fInstanceList);
+    auto* copy = alloc->make<InstanceList>(that->fInstanceList);
     *fInstanceTail = copy;
     fInstanceTail = (!copy->fNext) ? &copy->fNext : that->fInstanceTail;
     fInstanceCount += that->fInstanceCount;
@@ -144,8 +144,8 @@ GrOp::CombineResult GrDrawAtlasPathOp::onCombineIfPossible(
 void GrDrawAtlasPathOp::onPrePrepare(GrRecordingContext*,
                                      const GrSurfaceProxyView* writeView,
                                      GrAppliedClip*,
-                                     const GrXferProcessor::DstProxyView&) {
-}
+                                     const GrXferProcessor::DstProxyView&,
+                                     GrXferBarrierFlags renderPassXferBarriers) {}
 
 void GrDrawAtlasPathOp::onPrepare(GrOpFlushState* state) {
     size_t instanceStride = Instance::Stride(fUsesLocalCoords);
@@ -180,7 +180,8 @@ void GrDrawAtlasPathOp::onExecute(GrOpFlushState* state, const SkRect& chainBoun
 
     GrProgramInfo programInfo(state->proxy()->numSamples(), state->proxy()->numStencilSamples(),
                               state->proxy()->backendFormat(), state->writeView()->origin(),
-                              &pipeline, &shader, GrPrimitiveType::kTriangleStrip);
+                              &pipeline, &GrUserStencilSettings::kUnused, &shader,
+                              GrPrimitiveType::kTriangleStrip, 0, state->renderPassBarriers());
 
     state->bindPipelineAndScissorClip(programInfo, this->bounds());
     state->bindTextures(shader, *fAtlasProxy, pipeline);

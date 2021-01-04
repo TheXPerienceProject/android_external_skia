@@ -34,7 +34,7 @@ struct RunFontStorageEquivalent {
     uint32_t fFlags;
 };
 static_assert(sizeof(SkFont) == sizeof(RunFontStorageEquivalent), "runfont_should_stay_packed");
-}
+}  // namespace
 
 size_t SkTextBlob::RunRecord::StorageSize(uint32_t glyphCount, uint32_t textSize,
                                           SkTextBlob::GlyphPositioning positioning,
@@ -76,7 +76,7 @@ struct RunRecordStorageEquivalent {
     uint32_t fFlags;
     SkDEBUGCODE(unsigned fMagic;)
 };
-}
+}  // namespace
 
 void SkTextBlob::RunRecord::validate(const uint8_t* storageTop) const {
     SkASSERT(kRunRecordMagic == fMagic);
@@ -136,7 +136,7 @@ static int32_t next_id() {
     static std::atomic<int32_t> nextID{1};
     int32_t id;
     do {
-        id = nextID++;
+        id = nextID.fetch_add(1, std::memory_order_relaxed);
     } while (id == SK_InvalidGenID);
     return id;
 }

@@ -13,12 +13,11 @@
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrRenderTarget.h"
-#include "src/gpu/GrSurfacePriv.h"
 #include "src/gpu/GrTexture.h"
 
 #ifdef SK_DEBUG
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #endif
 
 void GrTexture::markMipmapsDirty() {
@@ -33,9 +32,8 @@ void GrTexture::markMipmapsClean() {
 }
 
 size_t GrTexture::onGpuMemorySize() const {
-    const GrCaps& caps = *this->getGpu()->caps();
-    return GrSurface::ComputeSize(caps, this->backendFormat(), this->dimensions(), 1,
-                                  this->mipmapped());
+    return GrSurface::ComputeSize(this->backendFormat(), this->dimensions(),
+                                  /*colorSamplesPerPixel=*/1, this->mipmapped());
 }
 
 /////////////////////////////////////////////////////////////////////////////

@@ -50,12 +50,11 @@ static sk_sp<SkShader> make_shader(SkBlendMode mode) {
 }
 
 class ComposeShaderGM : public skiagm::GM {
-public:
-    ComposeShaderGM() {
+protected:
+    void onOnceBeforeDraw() override {
         fShader = make_shader(SkBlendMode::kDstIn);
     }
 
-protected:
     SkString onShortName() override {
         return SkString("composeshader");
     }
@@ -241,7 +240,7 @@ private:
     sk_sp<SkShader> fAlpha8BitmapShader;
     sk_sp<SkShader> fLinearGradientShader;
 
-    typedef GM INHERITED;
+    using INHERITED = GM;
 };
 DEF_GM( return new ComposeShaderBitmapGM(false); )
 DEF_GM( return new ComposeShaderBitmapGM(true); )

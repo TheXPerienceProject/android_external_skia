@@ -193,7 +193,7 @@ protected:
     }
 
 private:
-    typedef Sample INHERITED;
+    using INHERITED = Sample;
 };
 DEF_SAMPLE( return new XferDemo; )
 
@@ -206,7 +206,7 @@ class CubicResamplerDemo : public Sample {
         sk_sp<SkImage>  fImage;
         SkRect          fBounds;
 
-        void draw(SkCanvas* canvas, SkImage::CubicResampler cubic) const {
+        void draw(SkCanvas* canvas, SkCubicResampler cubic) const {
             SkRect r = fBounds;
             SkPaint paint;
 
@@ -219,7 +219,8 @@ class CubicResamplerDemo : public Sample {
             lm.postTranslate(r.width() + 10, 0);
 
             paint.setShader(fImage->makeShader(SkTileMode::kClamp, SkTileMode::kClamp,
-                                               {SkSamplingMode::kLinear, SkMipmapMode::kNone},
+                                               SkFilterOptions{ SkSamplingMode::kLinear,
+                                                                SkMipmapMode::kNone },
                                                &lm));
             canvas->drawRect(r, paint);
 
@@ -303,6 +304,6 @@ private:
     SkRect                  fDomain;
     SkImage::CubicResampler fCubic;
 
-    typedef Sample INHERITED;
+    using INHERITED = Sample;
 };
 DEF_SAMPLE( return new CubicResamplerDemo; )

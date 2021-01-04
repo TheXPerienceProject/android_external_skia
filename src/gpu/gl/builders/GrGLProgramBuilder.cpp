@@ -14,7 +14,7 @@
 #include "src/core/SkTraceEvent.h"
 #include "src/core/SkWriteBuffer.h"
 #include "src/gpu/GrAutoLocaleSetter.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrPersistentCacheUtils.h"
 #include "src/gpu/GrProgramDesc.h"
 #include "src/gpu/GrShaderCaps.h"
@@ -23,6 +23,8 @@
 #include "src/gpu/gl/GrGLGpu.h"
 #include "src/gpu/gl/GrGLProgram.h"
 #include "src/gpu/gl/builders/GrGLProgramBuilder.h"
+
+#include <memory>
 #include "src/gpu/gl/builders/GrGLShaderStringBuilder.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLGeometryProcessor.h"
@@ -115,8 +117,8 @@ void GrGLProgramBuilder::computeCountsAndStrides(GrGLuint programID,
                                                  bool bindAttribLocations) {
     fVertexAttributeCnt = primProc.numVertexAttributes();
     fInstanceAttributeCnt = primProc.numInstanceAttributes();
-    fAttributes.reset(
-            new GrGLProgram::Attribute[fVertexAttributeCnt + fInstanceAttributeCnt]);
+    fAttributes = std::make_unique<GrGLProgram::Attribute[]>(
+            fVertexAttributeCnt + fInstanceAttributeCnt);
     auto addAttr = [&](int i, const auto& a, size_t* stride) {
         fAttributes[i].fCPUType = a.cpuType();
         fAttributes[i].fGPUType = a.gpuType();
@@ -228,7 +230,6 @@ sk_sp<GrGLProgram> GrGLProgramBuilder::finalize(const GrGLPrecompiledProgram* pr
     auto errorHandler = this->gpu()->getContext()->priv().getShaderErrorHandler();
     const GrPrimitiveProcessor& primProc = this->primitiveProcessor();
     SkSL::Program::Settings settings;
-    settings.fCaps = this->gpu()->glCaps().shaderCaps();
     settings.fFlipY = this->origin() != kTopLeft_GrSurfaceOrigin;
     settings.fSharpenTextures =
                     this->gpu()->getContext()->priv().options().fSharpenMipmappedTextures;
@@ -580,8 +581,6 @@ bool GrGLProgramBuilder::PrecompileProgram(GrGLPrecompiledProgram* precompiledPr
     auto errorHandler = gpu->getContext()->priv().getShaderErrorHandler();
 
     SkSL::Program::Settings settings;
-    const GrGLCaps& caps = gpu->glCaps();
-    settings.fCaps = caps.shaderCaps();
     settings.fSharpenTextures = gpu->getContext()->priv().options().fSharpenMipmappedTextures;
     GrPersistentCacheUtils::ShaderMetadata meta;
     meta.fSettings = &settings;
@@ -635,6 +634,7 @@ bool GrGLProgramBuilder::PrecompileProgram(GrGLPrecompiledProgram* precompiledPr
                                                           meta.fAttributeNames[i].c_str()));
     }
 
+    const GrGLCaps& caps = gpu->glCaps();
     if (meta.fHasCustomColorOutput && caps.bindFragDataLocationSupport()) {
         GR_GL_CALL(gpu->glInterface(), BindFragDataLocation(programID, 0,
                 GrGLSLFragmentShaderBuilder::DeclaredColorOutputName()));

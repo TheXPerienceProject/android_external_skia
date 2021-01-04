@@ -20,7 +20,6 @@ public:
     SkSurface_Base(const SkImageInfo&, const SkSurfaceProps*);
     ~SkSurface_Base() override;
 
-    virtual GrContext* onGetContext_deprecated();
     virtual GrRecordingContext* onGetRecordingContext();
 
     virtual GrBackendTexture onGetBackendTexture(BackendHandleAccess);
@@ -126,7 +125,9 @@ public:
 
     virtual bool onCharacterize(SkSurfaceCharacterization*) const { return false; }
     virtual bool onIsCompatible(const SkSurfaceCharacterization&) const { return false; }
-    virtual bool onDraw(sk_sp<const SkDeferredDisplayList>) { return false; }
+    virtual bool onDraw(sk_sp<const SkDeferredDisplayList>, int xOffset, int yOffset) {
+        return false;
+    }
 
     inline SkCanvas* getCachedCanvas();
     inline sk_sp<SkImage> refCachedImage();
@@ -149,7 +150,7 @@ private:
     friend class SkCanvas;
     friend class SkSurface;
 
-    typedef SkSurface INHERITED;
+    using INHERITED = SkSurface;
 };
 
 SkCanvas* SkSurface_Base::getCachedCanvas() {

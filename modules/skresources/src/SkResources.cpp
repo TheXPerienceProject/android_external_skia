@@ -10,6 +10,7 @@
 #include "include/codec/SkCodec.h"
 #include "include/core/SkData.h"
 #include "include/core/SkImage.h"
+#include "include/private/SkTPin.h"
 #include "include/utils/SkAnimCodecPlayer.h"
 #include "include/utils/SkBase64.h"
 #include "src/core/SkOSFile.h"
@@ -108,7 +109,7 @@ bool MultiFrameImageAsset::isMultiFrame() {
     return fPlayer->duration() > 0;
 }
 
-sk_sp<SkImage> MultiFrameImageAsset::getFrame(float t) {
+sk_sp<SkImage> MultiFrameImageAsset::generateFrame(float t) {
     auto decode = [](sk_sp<SkImage> image) {
         SkASSERT(image->isLazyGenerated());
 
@@ -139,10 +140,22 @@ sk_sp<SkImage> MultiFrameImageAsset::getFrame(float t) {
     auto frame = fPlayer->getFrame();
 
     if (fPreDecode && frame && frame->isLazyGenerated()) {
+        // The multi-frame decoder should never return lazy images.
+        SkASSERT(!this->isMultiFrame());
         frame = decode(std::move(frame));
     }
 
     return frame;
+}
+
+sk_sp<SkImage> MultiFrameImageAsset::getFrame(float t) {
+    // For static images we can reuse the cached frame
+    // (which includes the optional pre-decode step).
+    if (!fCachedFrame || this->isMultiFrame()) {
+        fCachedFrame = this->generateFrame(t);
+    }
+
+    return fCachedFrame;
 }
 
 sk_sp<FileResourceProvider> FileResourceProvider::Make(SkString base_dir, bool predecode) {

@@ -6,7 +6,6 @@
  */
 
 #include "src/gpu/GrRenderTarget.h"
-#include "src/gpu/GrRenderTargetPriv.h"
 #include "src/gpu/GrShaderCaps.h"
 #include "src/gpu/gl/GrGLGpu.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -155,7 +154,7 @@ SkString GrGLSLFPFragmentBuilder::writeProcessorFunction(GrGLSLFragmentProcessor
     // second actual argument for _coords.
     // FIXME: An alternative would be to have all FP functions have a float2 argument, and the
     // parent FP invokes it with the varying reference when it's been lifted to the vertex shader.
-    int paramCount = 2;
+    size_t paramCount = 2;
     GrShaderVar params[] = { GrShaderVar(args.fInputColor, kHalf4_GrSLType),
                              GrShaderVar(args.fSampleCoord, kFloat2_GrSLType) };
 
@@ -190,14 +189,20 @@ SkString GrGLSLFPFragmentBuilder::writeProcessorFunction(GrGLSLFragmentProcessor
 
     this->codeAppendf("half4 %s;\n", args.fOutputColor);
     fp->emitCode(args);
-    this->codeAppendf("return %s;\n", args.fOutputColor);
+    if (args.fFp.usesExplicitReturn()) {
+        // Some FPs explicitly return their output, so no need to do anything further
+        SkASSERT(SkStrContains(this->code().c_str(), "return"));
+    } else {
+        // Most FPs still just write their output to fOutputColor, so we need to inject the return
+        this->codeAppendf("return %s;\n", args.fOutputColor);
+    }
 
-    SkString result;
-    this->emitFunction(kHalf4_GrSLType, args.fFp.name(), paramCount, params,
-                       this->code().c_str(), &result);
+    SkString funcName = this->getMangledFunctionName(args.fFp.name());
+    this->emitFunction(kHalf4_GrSLType, funcName.c_str(), {params, paramCount},
+                       this->code().c_str(), args.fForceInline);
     this->deleteStage();
     this->onAfterChildProcEmitCode();
-    return result;
+    return funcName;
 }
 
 const char* GrGLSLFragmentShaderBuilder::dstColor() {
@@ -258,7 +263,7 @@ void GrGLSLFragmentShaderBuilder::enableSecondaryOutput() {
 
     // If the primary output is declared, we must declare also the secondary output
     // and vice versa, since it is not allowed to use a built-in gl_FragColor and a custom
-    // output. The condition also co-incides with the condition in whici GLES SL 2.0
+    // output. The condition also co-incides with the condition in which GLES SL 2.0
     // requires the built-in gl_SecondaryFragColorEXT, where as 3.0 requires a custom output.
     if (caps.mustDeclareFragmentShaderOutput()) {
         fOutputs.emplace_back(DeclaredSecondaryColorOutputName(), kHalf4_GrSLType,

@@ -9,7 +9,7 @@
 #include "include/gpu/GrRecordingContext.h"
 #include "src/core/SkMessageBus.h"
 #include "src/gpu/GrBackendTextureImageGenerator.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
@@ -127,8 +127,8 @@ GrSurfaceProxyView GrBackendTextureImageGenerator::onGenerateTexture(
         // The ref we add to fRefHelper here will be passed into and owned by the
         // GrRefCntedCallback.
         fRefHelper->ref();
-        releaseProcHelper.reset(
-                new GrRefCntedCallback(ReleaseRefHelper_TextureReleaseProc, fRefHelper));
+        releaseProcHelper =
+                GrRefCntedCallback::Make(ReleaseRefHelper_TextureReleaseProc, fRefHelper);
         fRefHelper->fBorrowingContextReleaseProc = releaseProcHelper.get();
     }
     fRefHelper->fBorrowingContextID = context->priv().contextID();
@@ -200,8 +200,8 @@ GrSurfaceProxyView GrBackendTextureImageGenerator::onGenerateTexture(
                 // proxy.
                 return {std::move(tex), true, GrSurfaceProxy::LazyInstantiationKeyMode::kUnsynced};
             },
-            backendFormat, fBackendTexture.dimensions(), GrRenderable::kNo, 1, textureIsMipMapped,
-            mipmapStatus, GrInternalSurfaceFlags::kReadOnly, SkBackingFit::kExact, SkBudgeted::kNo,
+            backendFormat, fBackendTexture.dimensions(), textureIsMipMapped, mipmapStatus,
+            GrInternalSurfaceFlags::kReadOnly, SkBackingFit::kExact, SkBudgeted::kNo,
             GrProtected::kNo, GrSurfaceProxy::UseAllocator::kYes);
     if (!proxy) {
         return {};

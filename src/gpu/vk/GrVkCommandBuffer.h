@@ -145,7 +145,7 @@ protected:
 
     void addingWork(const GrVkGpu* gpu);
 
-    void submitPipelineBarriers(const GrVkGpu* gpu);
+    void submitPipelineBarriers(const GrVkGpu* gpu, bool forSelfDependency = false);
 
     SkTDArray<const GrManagedResource*>  fTrackedResources;
     SkTDArray<const GrRecycledResource*> fTrackedRecycledResources;
@@ -187,8 +187,8 @@ private:
     float      fCachedBlendConstant[4];
 
     // Tracking of memory barriers so that we can submit them all in a batch together.
-    SkSTArray<4, VkBufferMemoryBarrier> fBufferBarriers;
-    SkSTArray<1, VkImageMemoryBarrier> fImageBarriers;
+    SkSTArray<1, VkBufferMemoryBarrier> fBufferBarriers;
+    SkSTArray<2, VkImageMemoryBarrier> fImageBarriers;
     bool fBarriersByRegion = false;
     VkPipelineStageFlags fSrcStageMask = 0;
     VkPipelineStageFlags fDstStageMask = 0;
@@ -323,7 +323,7 @@ private:
     VkFence                                                     fSubmitFence;
     SkTArray<sk_sp<GrRefCntedCallback>>                         fFinishedProcs;
 
-    typedef GrVkCommandBuffer INHERITED;
+    using INHERITED = GrVkCommandBuffer;
 };
 
 class GrVkSecondaryCommandBuffer : public GrVkCommandBuffer {
@@ -349,7 +349,7 @@ private:
     // Used for accessing fIsActive (on GrVkCommandBuffer)
     friend class GrVkPrimaryCommandBuffer;
 
-    typedef GrVkCommandBuffer INHERITED;
+    using INHERITED = GrVkCommandBuffer;
 };
 
 #endif

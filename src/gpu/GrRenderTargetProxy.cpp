@@ -11,14 +11,14 @@
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrGpuResourcePriv.h"
 #include "src/gpu/GrOpsTask.h"
-#include "src/gpu/GrRenderTargetPriv.h"
+#include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrResourceProvider.h"
-#include "src/gpu/GrSurfacePriv.h"
+#include "src/gpu/GrSurface.h"
 #include "src/gpu/GrTextureRenderTargetProxy.h"
 
 #ifdef SK_DEBUG
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #endif
 
 // Deferred version
@@ -109,7 +109,7 @@ sk_sp<GrSurface> GrRenderTargetProxy::createSurface(GrResourceProvider* resource
     return surface;
 }
 
-size_t GrRenderTargetProxy::onUninstantiatedGpuMemorySize(const GrCaps& caps) const {
+size_t GrRenderTargetProxy::onUninstantiatedGpuMemorySize() const {
     int colorSamplesPerPixel = this->numSamples();
     if (colorSamplesPerPixel > 1) {
         // Add one for the resolve buffer.
@@ -117,7 +117,7 @@ size_t GrRenderTargetProxy::onUninstantiatedGpuMemorySize(const GrCaps& caps) co
     }
 
     // TODO: do we have enough information to improve this worst case estimate?
-    return GrSurface::ComputeSize(caps, this->backendFormat(), this->dimensions(),
+    return GrSurface::ComputeSize(this->backendFormat(), this->dimensions(),
                                   colorSamplesPerPixel, GrMipmapped::kNo, !this->priv().isExact());
 }
 
@@ -156,7 +156,7 @@ void GrRenderTargetProxy::onValidateSurface(const GrSurface* surface) {
     SkASSERT(surface->asRenderTarget()->numSamples() == this->numSamples());
 
     GrInternalSurfaceFlags proxyFlags = fSurfaceFlags;
-    GrInternalSurfaceFlags surfaceFlags = surface->surfacePriv().flags();
+    GrInternalSurfaceFlags surfaceFlags = surface->flags();
     if (proxyFlags & GrInternalSurfaceFlags::kGLRTFBOIDIs0 && this->numSamples() == 1) {
         // Ganesh never internally creates FBO0 proxies or surfaces so this must be a wrapped
         // proxy. In this case, with no MSAA, rendering to FBO0 is strictly more limited than
@@ -166,5 +166,12 @@ void GrRenderTargetProxy::onValidateSurface(const GrSurface* surface) {
     }
     SkASSERT(((int)proxyFlags & kGrInternalRenderTargetFlagsMask) ==
              ((int)surfaceFlags & kGrInternalRenderTargetFlagsMask));
+
+    // We manually check the kVkRTSupportsInputAttachment since we only require it on the surface if
+    // the proxy has it set. If the proxy doesn't have the flag it is legal for the surface to
+    // have the flag.
+    if (proxyFlags & GrInternalSurfaceFlags::kVkRTSupportsInputAttachment) {
+        SkASSERT(surfaceFlags & GrInternalSurfaceFlags::kVkRTSupportsInputAttachment);
+    }
 }
 #endif

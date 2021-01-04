@@ -14,7 +14,6 @@
 
 class GrHardClip;
 class GrPath;
-class GrRenderTargetPriv;
 struct GrUserStencilSettings;
 
 /** Class that adds methods to GrRenderTargetContext that are only intended for use internal to
@@ -98,8 +97,8 @@ public:
     uint32_t testingOnly_getOpsTaskID();
 
     using WillAddOpFn = GrRenderTargetContext::WillAddOpFn;
-    void testingOnly_addDrawOp(std::unique_ptr<GrDrawOp>);
-    void testingOnly_addDrawOp(const GrClip*, std::unique_ptr<GrDrawOp>,
+    void testingOnly_addDrawOp(GrOp::Owner);
+    void testingOnly_addDrawOp(const GrClip*, GrOp::Owner ,
                                const std::function<WillAddOpFn>& = std::function<WillAddOpFn>());
 
     SkGlyphRunListPainter* testingOnly_glyphRunPainter() {
@@ -110,15 +109,15 @@ public:
         return fRenderTargetContext->asRenderTargetProxy()->refsWrappedObjects();
     }
 
-    void addDrawOp(const GrClip* clip, std::unique_ptr<GrDrawOp> op) {
+    void addDrawOp(const GrClip* clip, GrOp::Owner op) {
         fRenderTargetContext->addDrawOp(clip, std::move(op));
     }
 
 private:
     explicit GrRenderTargetContextPriv(GrRenderTargetContext* renderTargetContext)
         : fRenderTargetContext(renderTargetContext) {}
-    GrRenderTargetContextPriv(const GrRenderTargetPriv&) {} // unimpl
-    GrRenderTargetContextPriv& operator=(const GrRenderTargetPriv&); // unimpl
+    GrRenderTargetContextPriv(const GrRenderTargetContextPriv&) = delete;
+    GrRenderTargetContextPriv& operator=(const GrRenderTargetContextPriv&) = delete;
 
     // No taking addresses of this type.
     const GrRenderTargetContextPriv* operator&() const;
@@ -133,7 +132,7 @@ inline GrRenderTargetContextPriv GrRenderTargetContext::priv() {
     return GrRenderTargetContextPriv(this);
 }
 
-inline const GrRenderTargetContextPriv GrRenderTargetContext::priv() const {
+inline const GrRenderTargetContextPriv GrRenderTargetContext::priv() const {  // NOLINT(readability-const-return-type)
     return GrRenderTargetContextPriv(const_cast<GrRenderTargetContext*>(this));
 }
 

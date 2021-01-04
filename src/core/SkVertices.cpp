@@ -24,7 +24,7 @@ static int32_t next_id() {
 
     int32_t id;
     do {
-        id = nextID++;
+        id = nextID.fetch_add(1, std::memory_order_relaxed);
     } while (id == SK_InvalidGenID);
     return id;
 }
@@ -269,7 +269,7 @@ sk_sp<SkVertices> SkVertices::Builder::detach() {
     if (fVertices) {
         fVertices->fBounds.setBounds(fVertices->fPositions, fVertices->fVertexCount);
         if (fVertices->fMode == kTriangleFan_VertexMode) {
-            if (fIntermediateFanIndices.get()) {
+            if (fIntermediateFanIndices) {
                 SkASSERT(fVertices->fIndexCount);
                 auto tempIndices = this->indices();
                 for (int t = 0; t < fVertices->fIndexCount - 2; ++t) {

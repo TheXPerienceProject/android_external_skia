@@ -8,7 +8,7 @@
 #include "src/gpu/GrStagingBufferManager.h"
 
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrResourceProvider.h"
 
@@ -54,7 +54,7 @@ GrStagingBufferManager::Slice GrStagingBufferManager::allocateStagingBufferSlice
 void GrStagingBufferManager::detachBuffers() {
     for (size_t i = 0; i < fBuffers.size(); ++i) {
         fBuffers[i].fBuffer->unmap();
-        fGpu->takeOwnershipOfStagingBuffer(std::move(fBuffers[i].fBuffer));
+        fGpu->takeOwnershipOfBuffer(std::move(fBuffers[i].fBuffer));
     }
     fBuffers.clear();
 }

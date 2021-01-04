@@ -10,6 +10,7 @@
  **************************************************************************************************/
 #include "GrHighContrastFilterEffect.h"
 
+#include "src/core/SkUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -37,26 +38,27 @@ public:
         (void)linearize;
         contrastModVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag,
                                                           kHalf_GrSLType, "contrastMod");
-        SkString HSLToRGB_name;
+        SkString HSLToRGB_name = fragBuilder->getMangledFunctionName("HSLToRGB");
         const GrShaderVar HSLToRGB_args[] = {GrShaderVar("p", kHalf_GrSLType),
                                              GrShaderVar("q", kHalf_GrSLType),
                                              GrShaderVar("t", kHalf_GrSLType)};
-        fragBuilder->emitFunction(kHalf_GrSLType, "HSLToRGB", 3, HSLToRGB_args,
+        fragBuilder->emitFunction(kHalf_GrSLType, HSLToRGB_name.c_str(), {HSLToRGB_args, 3},
                                   R"SkSL(if (t < 0.0) t += 1.0;
 if (t > 1.0) t -= 1.0;
-return t < 0.16666666666666666 ? p + ((q - p) * 6.0) * t : (t < 0.5 ? q : (t < 0.66666666666666663 ? p + ((q - p) * (0.66666666666666663 - t)) * 6.0 : p));
-)SkSL",
-                                  &HSLToRGB_name);
-        SkString _sample896 = this->invokeChild(0, args);
+return t < 0.1666666716337204 ? p + ((q - p) * 6.0) * t : (t < 0.5 ? q : (t < 0.66666668653488159 ? p + ((q - p) * (0.66666668653488159 - t)) * 6.0 : p));
+)SkSL");
+        fragBuilder->codeAppendf(
+                R"SkSL(;)SkSL");
+        SkString _sample0 = this->invokeChild(0, args);
         fragBuilder->codeAppendf(
                 R"SkSL(
 half4 inColor = %s;
-half4 inlineResult_fp_0;
-half4 inlineArg_fp_1_0 = inColor;
+half4 _0_unpremul;
 {
-    inlineResult_fp_0 = half4(inlineArg_fp_1_0.xyz / max(inlineArg_fp_1_0.w, 9.9999997473787516e-05), inlineArg_fp_1_0.w);
+    _0_unpremul = half4(inColor.xyz / max(inColor.w, 9.9999997473787516e-05), inColor.w);
 }
-half4 color = inlineResult_fp_0;
+
+half4 color = _0_unpremul;
 
 @if (%s) {
     color.xyz = color.xyz * color.xyz;
@@ -86,7 +88,7 @@ half4 color = inlineResult_fp_0;
         } else {
             h = (color.x - color.y) / d + 4.0;
         }
-        h *= 0.16666666666666666;
+        h *= 0.1666666716337204;
     }
     l = 1.0 + l * -0.5;
     if (s == 0.0) {
@@ -94,9 +96,9 @@ half4 color = inlineResult_fp_0;
     } else {
         half q = l < 0.5 ? l * (1.0 + s) : (l + s) - l * s;
         half p = 2.0 * l - q;
-        color.x = %s(p, q, h + 0.33333333333333331);
+        color.x = %s(p, q, h + 0.3333333432674408);
         color.y = %s(p, q, h);
-        color.z = %s(p, q, h - 0.33333333333333331);
+        color.z = %s(p, q, h - 0.3333333432674408);
     }
 }
 @if (%s) {
@@ -107,9 +109,9 @@ color = clamp(color, 0.0, 1.0);
 @if (%s) {
     color.xyz = sqrt(color.xyz);
 }
-%s = half4(color.xyz, 1) * inColor.w;
+%s = half4(color.xyz, 1.0) * inColor.w;
 )SkSL",
-                _sample896.c_str(), (_outer.linearize ? "true" : "false"),
+                _sample0.c_str(), (_outer.linearize ? "true" : "false"),
                 (_outer.grayscale ? "true" : "false"), (_outer.invertBrightness ? "true" : "false"),
                 (_outer.invertLightness ? "true" : "false"), HSLToRGB_name.c_str(),
                 HSLToRGB_name.c_str(), HSLToRGB_name.c_str(),
@@ -132,11 +134,11 @@ GrGLSLFragmentProcessor* GrHighContrastFilterEffect::onCreateGLSLInstance() cons
 }
 void GrHighContrastFilterEffect::onGetGLSLProcessorKey(const GrShaderCaps& caps,
                                                        GrProcessorKeyBuilder* b) const {
-    b->add32((int32_t)hasContrast);
-    b->add32((int32_t)grayscale);
-    b->add32((int32_t)invertBrightness);
-    b->add32((int32_t)invertLightness);
-    b->add32((int32_t)linearize);
+    b->add32((uint32_t)hasContrast);
+    b->add32((uint32_t)grayscale);
+    b->add32((uint32_t)invertBrightness);
+    b->add32((uint32_t)invertLightness);
+    b->add32((uint32_t)linearize);
 }
 bool GrHighContrastFilterEffect::onIsEqual(const GrFragmentProcessor& other) const {
     const GrHighContrastFilterEffect& that = other.cast<GrHighContrastFilterEffect>();
@@ -149,6 +151,7 @@ bool GrHighContrastFilterEffect::onIsEqual(const GrFragmentProcessor& other) con
     if (linearize != that.linearize) return false;
     return true;
 }
+bool GrHighContrastFilterEffect::usesExplicitReturn() const { return false; }
 GrHighContrastFilterEffect::GrHighContrastFilterEffect(const GrHighContrastFilterEffect& src)
         : INHERITED(kGrHighContrastFilterEffect_ClassID, src.optimizationFlags())
         , contrastMod(src.contrastMod)
@@ -160,8 +163,18 @@ GrHighContrastFilterEffect::GrHighContrastFilterEffect(const GrHighContrastFilte
     this->cloneAndRegisterAllChildProcessors(src);
 }
 std::unique_ptr<GrFragmentProcessor> GrHighContrastFilterEffect::clone() const {
-    return std::unique_ptr<GrFragmentProcessor>(new GrHighContrastFilterEffect(*this));
+    return std::make_unique<GrHighContrastFilterEffect>(*this);
 }
+#if GR_TEST_UTILS
+SkString GrHighContrastFilterEffect::onDumpInfo() const {
+    return SkStringPrintf(
+            "(contrastMod=%f, hasContrast=%s, grayscale=%s, invertBrightness=%s, "
+            "invertLightness=%s, linearize=%s)",
+            contrastMod, (hasContrast ? "true" : "false"), (grayscale ? "true" : "false"),
+            (invertBrightness ? "true" : "false"), (invertLightness ? "true" : "false"),
+            (linearize ? "true" : "false"));
+}
+#endif
 GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrHighContrastFilterEffect);
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> GrHighContrastFilterEffect::TestCreate(

@@ -33,14 +33,13 @@ class CircleGM : public GM {
     enum {
         kLooperColorSentinel = 0x01020304
     };
-public:
-    CircleGM() {
+
+protected:
+    void onOnceBeforeDraw() override {
         this->setBGColor(0xFF000000);
         this->makePaints();
         this->makeMatrices();
     }
-
-protected:
 
     SkString onShortName() override {
         return SkString("circles");
@@ -202,7 +201,7 @@ protected:
     }
 
 private:
-    typedef GM INHERITED;
+    using INHERITED = GM;
     SkTArray<SkPaint> fPaints;
     SkTArray<SkMatrix> fMatrices;
 };
@@ -211,4 +210,4 @@ private:
 
 DEF_GM( return new CircleGM; )
 
-}
+}  // namespace skiagm

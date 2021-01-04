@@ -9,10 +9,11 @@
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
+#include "include/gpu/mtl/GrMtlBackendContext.h"
 #include "include/gpu/mtl/GrMtlTypes.h"
 #include "src/core/SkMathPriv.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/image/SkImage_Base.h"
 #include "tools/sk_app/MetalWindowContext.h"
 
@@ -48,8 +49,10 @@ void MetalWindowContext::initializeContext() {
 
     fValid = this->onInitializeContext();
 
-    fContext = GrDirectContext::MakeMetal((__bridge void*)fDevice, (__bridge void*)fQueue,
-                                          fDisplayParams.fGrContextOptions);
+    GrMtlBackendContext backendContext = {};
+    backendContext.fDevice.retain((__bridge GrMTLHandle)fDevice);
+    backendContext.fQueue.retain((__bridge GrMTLHandle)fQueue);
+    fContext = GrDirectContext::MakeMetal(backendContext, fDisplayParams.fGrContextOptions);
     if (!fContext && fDisplayParams.fMSAASampleCount > 1) {
         fDisplayParams.fMSAASampleCount /= 2;
         this->initializeContext();
@@ -59,7 +62,7 @@ void MetalWindowContext::initializeContext() {
 
 void MetalWindowContext::destroyContext() {
     if (fContext) {
-        // in case we have outstanding refs to this guy (lua?)
+        // in case we have outstanding refs to this (lua?)
         fContext->abandonContext();
         fContext.reset();
     }
@@ -76,27 +79,49 @@ void MetalWindowContext::destroyContext() {
 sk_sp<SkSurface> MetalWindowContext::getBackbufferSurface() {
     sk_sp<SkSurface> surface;
     if (fContext) {
-        surface = SkSurface::MakeFromCAMetalLayer(fContext.get(), (__bridge GrMTLHandle)fMetalLayer,
-                                                  kTopLeft_GrSurfaceOrigin, fSampleCount,
-                                                  kBGRA_8888_SkColorType,
-                                                  fDisplayParams.fColorSpace,
-                                                  &fDisplayParams.fSurfaceProps,
-                                                  &fDrawableHandle);
+        if (fDisplayParams.fDelayDrawableAcquisition) {
+            surface = SkSurface::MakeFromCAMetalLayer(fContext.get(),
+                                                      (__bridge GrMTLHandle)fMetalLayer,
+                                                      kTopLeft_GrSurfaceOrigin, fSampleCount,
+                                                      kBGRA_8888_SkColorType,
+                                                      fDisplayParams.fColorSpace,
+                                                      &fDisplayParams.fSurfaceProps,
+                                                      &fDrawableHandle);
+        } else {
+            id<CAMetalDrawable> currentDrawable = [fMetalLayer nextDrawable];
+
+            GrMtlTextureInfo fbInfo;
+            fbInfo.fTexture.retain(currentDrawable.texture);
+
+            GrBackendRenderTarget backendRT(fWidth,
+                                            fHeight,
+                                            fSampleCount,
+                                            fbInfo);
+
+            surface = SkSurface::MakeFromBackendRenderTarget(fContext.get(), backendRT,
+                                                             kTopLeft_GrSurfaceOrigin,
+                                                             kBGRA_8888_SkColorType,
+                                                             fDisplayParams.fColorSpace,
+                                                             &fDisplayParams.fSurfaceProps);
+
+            fDrawableHandle = CFRetain((GrMTLHandle) currentDrawable);
+        }
     }
 
     return surface;
 }
 
 void MetalWindowContext::swapBuffers() {
-    // ARC is off in sk_app, so we need to release the CF ref manually
     id<CAMetalDrawable> currentDrawable = (id<CAMetalDrawable>)fDrawableHandle;
-    CFRelease(fDrawableHandle);
 
     id<MTLCommandBuffer> commandBuffer = [fQueue commandBuffer];
     commandBuffer.label = @"Present";
 
     [commandBuffer presentDrawable:currentDrawable];
     [commandBuffer commit];
+    // ARC is off in sk_app, so we need to release the CF ref manually
+    CFRelease(fDrawableHandle);
+    fDrawableHandle = nil;
 }
 
 void MetalWindowContext::setDisplayParams(const DisplayParams& params) {

@@ -10,6 +10,7 @@
  **************************************************************************************************/
 #include "GrClampFragmentProcessor.h"
 
+#include "src/core/SkUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -25,18 +26,17 @@ public:
         (void)_outer;
         auto clampToPremul = _outer.clampToPremul;
         (void)clampToPremul;
-        SkString _sample464 = this->invokeChild(0, args);
+        SkString _sample0 = this->invokeChild(0, args);
         fragBuilder->codeAppendf(
                 R"SkSL(half4 inputColor = %s;
 @if (%s) {
     half alpha = clamp(inputColor.w, 0.0, 1.0);
-    %s = half4(clamp(inputColor.xyz, 0.0, alpha), alpha);
+    return half4(clamp(inputColor.xyz, 0.0, alpha), alpha);
 } else {
-    %s = clamp(inputColor, 0.0, 1.0);
+    return clamp(inputColor, 0.0, 1.0);
 }
 )SkSL",
-                _sample464.c_str(), (_outer.clampToPremul ? "true" : "false"), args.fOutputColor,
-                args.fOutputColor);
+                _sample0.c_str(), (_outer.clampToPremul ? "true" : "false"));
     }
 
 private:
@@ -48,7 +48,7 @@ GrGLSLFragmentProcessor* GrClampFragmentProcessor::onCreateGLSLInstance() const 
 }
 void GrClampFragmentProcessor::onGetGLSLProcessorKey(const GrShaderCaps& caps,
                                                      GrProcessorKeyBuilder* b) const {
-    b->add32((int32_t)clampToPremul);
+    b->add32((uint32_t)clampToPremul);
 }
 bool GrClampFragmentProcessor::onIsEqual(const GrFragmentProcessor& other) const {
     const GrClampFragmentProcessor& that = other.cast<GrClampFragmentProcessor>();
@@ -56,14 +56,20 @@ bool GrClampFragmentProcessor::onIsEqual(const GrFragmentProcessor& other) const
     if (clampToPremul != that.clampToPremul) return false;
     return true;
 }
+bool GrClampFragmentProcessor::usesExplicitReturn() const { return true; }
 GrClampFragmentProcessor::GrClampFragmentProcessor(const GrClampFragmentProcessor& src)
         : INHERITED(kGrClampFragmentProcessor_ClassID, src.optimizationFlags())
         , clampToPremul(src.clampToPremul) {
     this->cloneAndRegisterAllChildProcessors(src);
 }
 std::unique_ptr<GrFragmentProcessor> GrClampFragmentProcessor::clone() const {
-    return std::unique_ptr<GrFragmentProcessor>(new GrClampFragmentProcessor(*this));
+    return std::make_unique<GrClampFragmentProcessor>(*this);
 }
+#if GR_TEST_UTILS
+SkString GrClampFragmentProcessor::onDumpInfo() const {
+    return SkStringPrintf("(clampToPremul=%s)", (clampToPremul ? "true" : "false"));
+}
+#endif
 GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrClampFragmentProcessor);
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> GrClampFragmentProcessor::TestCreate(GrProcessorTestData* d) {

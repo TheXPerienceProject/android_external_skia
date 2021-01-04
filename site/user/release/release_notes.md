@@ -5,6 +5,174 @@ This page includes a list of high level updates for each milestone release.
 
 * * *
 
+Milestone 88
+------------
+
+  * SkYUVAInfo now has separate enums for division of channels among planes and
+    the subsampling. The previous combined enum, PlanarConfig, is deprecated.
+    https://review.skia.org/334102
+
+  * Simplified SkDeferredDisplayListRecorder promise image API. Removed "release"
+    callback and renamed "done" callback to "release". The new "release" proc can
+    be null. Added a new SkYUVAInfo-based factory for YUVA promise texture images
+    and deprecated the old SkYUVAIndex-based one.
+    https://review.skia.org/331836
+    https://review.skia.org/333519
+
+  * Limit the types and intrinsics supported in SkRuntimeEffect to GLSL ES 1.00
+    https://review.skia.org/332597
+
+  * Add AVIF support to SkHeifCodec.
+
+  * Add support for creating SkSurfaceCharacterizations directly for use by a
+    GrVkSecondaryCBDrawContext.
+    https://review.skia.org/331877
+
+  * Removed SkSurfaceProps::kLegacyFontHost_InitType, SkFontLCDConfig, and related code.
+    The default pixel geometry for SkSurfaceProps is now kUnknown instead of kRGB_H.
+    The removal was guarded by the SK_LEGACY_SURFACE_PROPS build flag which was later removed.
+    https://review.skia.org/322490
+    https://review.skia.org/329364
+
+  * Legacy 8-bit YUV interface removed from SkImageGenerator. Use more flexible SkYUVAPixmaps-
+    based interface instead.
+    https://review.skia.org/327917
+
+  * New variant of SkImage::MakeFromYUVATextures. Takes a new type GrYUVATextures
+    which wraps an SkYUVAInfo and compatible set of GrBackendTextures. The provides
+    a more complete and structured specification of the planar configuration. Previous
+    version is deprecated.
+    Already deprecated MakeFromYUVATexturesCopyToExternal added to replace other deprecated
+    APIs. It's not recommended that clients use this and instead use the pattern described
+    in the API comment.
+    https://review.skia.org/317762
+    https://review.skia.org/329956
+
+  * Add field to GrContextOptions to disable mipmap support even if the backend
+    supports it.
+
+  * SkTPin() removed from public API.
+
+* * *
+
+Milestone 87
+------------
+
+  * GrVkImageInfo now has a field for sample count. GrBackendRenderTarget constructor
+    that took both a GrVkImageInfo and separate sample count is deprecated. Use the
+    version without sample count instead. Similarly, GrD3DTextureResourceInfo now
+    has a sample count field and GrBackendRenderTarget no longer takes a separate
+    sample count for Direct3D. The sample count for GrBackendRenderTarget is now
+    directly queried from MtlTexture rather than passed separately. The version that
+    takes a separate sample count is deprecated and the parameter is ignored.
+    https://review.skia.org/320262
+    https://review.skia.org/320757
+    https://review.skia.org/320956
+
+  * Added deprecation warning for Metal support on MacOS 10.13, iOS 8.3, and older.
+    https://review.skia.org/320260
+
+  * GrVkImageInfo now has a field for sample count. GrBackendRenderTarget constructor
+    that took both a GrVkImageInfo and separate sample count is deprecated. Use the
+    version without sample count instead.
+
+  * Update SkClipOp::kMax_EnumValue to include only intersect and difference when
+    SK_SUPPORT_DEPRECATED_CLIPOPS is not defined.
+    https://review.skia.org/320064
+
+  * Add support for external allocator for Direct3D 12 backend.
+    Defines base classes for an allocation associated with a backend texture and a
+    a memory allocator to create such allocations.
+    Adds memory allocator to backend context.
+    https://review.skia.org/317243
+
+  * Add new optional parameter to GrContext::setBackend[Texture/RenderTarget]State which can
+    be used to return the previous GrBackendSurfaceMutableState before the requested change.
+    https://review.skia.org/318698
+
+  * New optimized clip stack for GPU backends. Enabled by default but old behavior based on
+    SkClipStack can be restored by defining SK_DISABLE_NEW_GR_CLIP_STACK when building. It is not
+    compatible with SK_SUPPORT_DEPRECATED_CLIPOPS and we are targeting the removal of support for
+    the deprecated, expanding clip ops.
+    https://review.skia.org/317209
+
+  * GPU backends now properly honor the SkFilterQuality when calling drawAtlas.
+    https://review.skia.org/313081
+
+  * The signature of 'main' used with SkRuntimeEffect SkSL has changed. There is no longer an
+    'inout half4 color' parameter, effects must return their color instead.
+    Valid signatures are now 'half4 main()' or 'half4 main(float2 coord)'.
+    https://review.skia.org/310756
+
+  * New YUVA planar specifications for SkCodec, SkImageGenerator, SkImage::MakeFromYUVAPixmaps.
+    Chroma subsampling is specified in more structured way. SkCodec and SkImageGenerator
+    don't assume 3 planes with 8bit planar values. Old APIs are deprecated.
+    https://review.skia.org/309658
+    https://review.skia.org/312886
+    https://review.skia.org/314276
+    https://review.skia.org/316837
+    https://review.skia.org/317097
+
+  * Added VkImageUsageFlags to GrVkImageInfo struct.
+
+* * *
+
+Milestone 86
+------------
+
+  * Remove support for 'in' variables from SkRuntimeEffect. API now exclusively refers to inputs
+    as 'uniforms'.
+    https://review.skia.org/309050
+
+  * Add SkImageGeneratorNDK and SkEncodeImageWithNDK for using Android's NDK APIs to decode and
+    encode.
+    https://review.skia.org/308185
+    https://review.skia.org/308800
+
+  * SkImage:remove DecodeToRaster, DecodeToTexture
+    https://review.skia.org/306331
+
+  * Add GrContext api to update compressed backend textures.
+    https://review.skia.org/302265
+
+  * Rename GrMipMapped to GrMipmapped for consistency with new APIs.
+    Also rename GrBackendTexture::hasMipMaps() to GrBackendTexture::hasMipmaps()
+    https://review.skia.org/304576
+    https://review.skia.org/304598
+
+  * Add option for clients to own semaphores after wait calls.
+    https://review.skia.org/301216
+
+  * Remove obsolete GrFlushFlags.
+    https://review.skia.org/298818
+
+  * Adds default flush() calls to SkSurface, SkImage, and GrContext. These calls do
+    a basic flush without a submit. If you haven't updated Skia in a couple releases
+    and still have flush() calls in your code that you expect to do a flush and
+    submit, you should update all those to the previously added flushAndSubmit() calls
+    instead.
+    https://review.skia.org/299141
+
+  * Enable BackendSemaphores for the Direct3D backend.
+    https://review.skia.org/298752
+
+  * Added SkImage:asyncRescaleAndReadPixels and SkImage::asyncRescaleAndReadPixelsYUV420
+    https://review.skia.org/299281
+
+  * Ganesh is moving towards replacing GrContext with the GrDirectContext/GrRecordingContext
+    pair. GrDirectContexts have _direct_ access to the GPU and are very similar to the old
+    GrContext. GrRecordingContexts are less powerful contexts that lack GPU access but provided
+    context-like utilities during DDL recording. SkSurfaces and SkCanvas will now only return
+    GrRecordingContexts. Clients requiring context features that need GPU access can then
+    check (via GrRecordingContext::asDirectContext) if the available recording context is actually
+    a direct context.
+
+  * Replace #defined values in SkString with equivalent constexprs.
+    http://review.skia.org/306160
+
+
+* * *
+
 Milestone 85
 ------------
 

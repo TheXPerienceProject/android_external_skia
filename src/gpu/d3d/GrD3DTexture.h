@@ -39,7 +39,7 @@ public:
 
     void textureParamsModified() override {}
 
-    void addIdleProc(sk_sp<GrRefCntedCallback>, IdleState) override;
+    void addIdleProc(sk_sp<GrRefCntedCallback>) override;
     void callIdleProcsOnBehalfOfResource() override;
 
 protected:
@@ -86,7 +86,7 @@ private:
 
     GrD3DDescriptorHeap::CPUHandle fShaderResourceView;
 
-    typedef GrTexture INHERITED;
+    using INHERITED = GrTexture;
 };
 
 #endif

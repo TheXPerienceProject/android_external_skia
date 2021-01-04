@@ -15,7 +15,8 @@
 #include "src/gpu/SkGr.h"
 #include "src/image/SkImage_GpuBase.h"
 
-class GrContext;
+class GrDirectContext;
+class GrRecordingContext;
 class GrTexture;
 
 class SkBitmap;
@@ -23,8 +24,8 @@ struct SkYUVAIndex;
 
 class SkImage_Gpu : public SkImage_GpuBase {
 public:
-    SkImage_Gpu(sk_sp<GrContext>, uint32_t uniqueID, GrSurfaceProxyView, SkColorType, SkAlphaType,
-                sk_sp<SkColorSpace>);
+    SkImage_Gpu(sk_sp<GrImageContext>, uint32_t uniqueID, GrSurfaceProxyView, SkColorType,
+                SkAlphaType, sk_sp<SkColorSpace>);
     ~SkImage_Gpu() override;
 
     GrSemaphoresSubmitted onFlush(GrDirectContext*, const GrFlushInfo&) override;
@@ -71,8 +72,7 @@ public:
      */
     static sk_sp<SkImage> MakePromiseTexture(GrRecordingContext*,
                                              const GrBackendFormat& backendFormat,
-                                             int width,
-                                             int height,
+                                             SkISize dimensions,
                                              GrMipmapped mipMapped,
                                              GrSurfaceOrigin origin,
                                              SkColorType colorType,
@@ -80,20 +80,12 @@ public:
                                              sk_sp<SkColorSpace> colorSpace,
                                              PromiseImageTextureFulfillProc textureFulfillProc,
                                              PromiseImageTextureReleaseProc textureReleaseProc,
-                                             PromiseImageTextureDoneProc textureDoneProc,
-                                             PromiseImageTextureContext textureContext,
-                                             PromiseImageApiVersion);
-
-    static sk_sp<SkImage> ConvertYUVATexturesToRGB(GrContext*, SkYUVColorSpace yuvColorSpace,
-                                                   const GrBackendTexture yuvaTextures[],
-                                                   const SkYUVAIndex yuvaIndices[4],
-                                                   SkISize imageSize, GrSurfaceOrigin imageOrigin,
-                                                   GrRenderTargetContext*);
+                                             PromiseImageTextureContext textureContext);
 
 private:
     GrSurfaceProxyView fView;
 
-    typedef SkImage_GpuBase INHERITED;
+    using INHERITED = SkImage_GpuBase;
 };
 
 #endif

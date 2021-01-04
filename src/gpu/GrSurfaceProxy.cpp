@@ -11,6 +11,7 @@
 #include "include/gpu/GrRecordingContext.h"
 #include "src/core/SkMathPriv.h"
 #include "src/core/SkMipmap.h"
+#include "src/gpu/GrAttachment.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrGpuResourcePriv.h"
@@ -18,16 +19,14 @@
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
-#include "src/gpu/GrStencilAttachment.h"
-#include "src/gpu/GrSurfacePriv.h"
+#include "src/gpu/GrSurface.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/GrTextureRenderTargetProxy.h"
 
 #ifdef SK_DEBUG
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrRenderTarget.h"
-#include "src/gpu/GrRenderTargetPriv.h"
 
 static bool is_valid_lazy(const SkISize& dimensions, SkBackingFit fit) {
     // A "fully" lazy proxy's width and height are not known until instantiation time.
@@ -91,7 +90,7 @@ GrSurfaceProxy::GrSurfaceProxy(sk_sp<GrSurface> surface,
                                SkBackingFit fit,
                                UseAllocator useAllocator)
         : fTarget(std::move(surface))
-        , fSurfaceFlags(fTarget->surfacePriv().flags())
+        , fSurfaceFlags(fTarget->flags())
         , fFormat(fTarget->backendFormat())
         , fDimensions(fTarget->dimensions())
         , fFit(fit)
@@ -421,7 +420,8 @@ bool GrSurfaceProxyPriv::doLazyInstantiation(GrResourceProvider* resourceProvide
 
 #ifdef SK_DEBUG
 void GrSurfaceProxy::validateSurface(const GrSurface* surface) {
-    SkASSERT(surface->backendFormat() == fFormat);
+    SkASSERTF(surface->backendFormat() == fFormat, "%s != %s",
+              surface->backendFormat().toStr().c_str(), fFormat.toStr().c_str());
 
     this->onValidateSurface(surface);
 }

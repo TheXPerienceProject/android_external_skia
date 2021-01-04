@@ -25,7 +25,6 @@ public:
     static sk_sp<SkSurface> MakeWrappedRenderTarget(GrRecordingContext*,
                                                     std::unique_ptr<GrRenderTargetContext>);
 
-    GrContext* onGetContext_deprecated() override;
     GrRecordingContext* onGetRecordingContext() override;
 
     GrBackendTexture onGetBackendTexture(BackendHandleAccess) override;
@@ -59,14 +58,14 @@ public:
     bool onCharacterize(SkSurfaceCharacterization*) const override;
     bool onIsCompatible(const SkSurfaceCharacterization&) const override;
     void onDraw(SkCanvas* canvas, SkScalar x, SkScalar y, const SkPaint* paint) override;
-    bool onDraw(sk_sp<const SkDeferredDisplayList>) override;
+    bool onDraw(sk_sp<const SkDeferredDisplayList>, int xOffset, int yOffset) override;
 
     SkGpuDevice* getDevice() { return fDevice.get(); }
 
 private:
     sk_sp<SkGpuDevice> fDevice;
 
-    typedef SkSurface_Base INHERITED;
+    using INHERITED = SkSurface_Base;
 };
 
 #endif // SK_SUPPORT_GPU

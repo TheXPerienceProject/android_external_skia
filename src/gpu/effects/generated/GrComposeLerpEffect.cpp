@@ -10,6 +10,7 @@
  **************************************************************************************************/
 #include "GrComposeLerpEffect.h"
 
+#include "src/core/SkUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -27,12 +28,12 @@ public:
         (void)weight;
         weightVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag,
                                                      kFloat_GrSLType, "weight");
-        SkString _sample273 = this->invokeChild(0, args);
-        SkString _sample289 = this->invokeChild(1, args);
+        SkString _sample0 = this->invokeChild(0, args);
+        SkString _sample1 = this->invokeChild(1, args);
         fragBuilder->codeAppendf(
                 R"SkSL(%s = mix(%s, %s, half(%s));
 )SkSL",
-                args.fOutputColor, _sample273.c_str(), _sample289.c_str(),
+                args.fOutputColor, _sample0.c_str(), _sample1.c_str(),
                 args.fUniformHandler->getUniformCStr(weightVar));
     }
 
@@ -55,10 +56,14 @@ bool GrComposeLerpEffect::onIsEqual(const GrFragmentProcessor& other) const {
     if (weight != that.weight) return false;
     return true;
 }
+bool GrComposeLerpEffect::usesExplicitReturn() const { return false; }
 GrComposeLerpEffect::GrComposeLerpEffect(const GrComposeLerpEffect& src)
         : INHERITED(kGrComposeLerpEffect_ClassID, src.optimizationFlags()), weight(src.weight) {
     this->cloneAndRegisterAllChildProcessors(src);
 }
 std::unique_ptr<GrFragmentProcessor> GrComposeLerpEffect::clone() const {
-    return std::unique_ptr<GrFragmentProcessor>(new GrComposeLerpEffect(*this));
+    return std::make_unique<GrComposeLerpEffect>(*this);
 }
+#if GR_TEST_UTILS
+SkString GrComposeLerpEffect::onDumpInfo() const { return SkStringPrintf("(weight=%f)", weight); }
+#endif

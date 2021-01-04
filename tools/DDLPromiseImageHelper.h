@@ -12,13 +12,14 @@
 #include "include/core/SkDeferredDisplayListRecorder.h"
 #include "include/core/SkPromiseImageTexture.h"
 #include "include/core/SkYUVAIndex.h"
+#include "include/core/SkYUVAPixmaps.h"
 #include "include/core/SkYUVASizeInfo.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/private/SkTArray.h"
 #include "src/core/SkCachedData.h"
 #include "src/core/SkTLazy.h"
 
-class GrContext;
+class GrDirectContext;
 class SkImage;
 class SkMipmap;
 class SkPicture;
@@ -47,19 +48,11 @@ public:
     void destroyBackendTexture();
 
     sk_sp<SkPromiseImageTexture> fulfill() {
-        SkASSERT(fUnreleasedFulfills >= 0);
-        ++fUnreleasedFulfills;
         ++fTotalFulfills;
         return fPromiseImageTexture;
     }
 
     void release() {
-        SkASSERT(fUnreleasedFulfills > 0);
-        --fUnreleasedFulfills;
-        ++fTotalReleases;
-    }
-
-    void done() {
         ++fDoneCnt;
         SkASSERT(fDoneCnt <= fNumImages);
     }
@@ -78,11 +71,6 @@ public:
     static void PromiseImageReleaseProc(void* textureContext) {
         auto callbackContext = static_cast<PromiseImageCallbackContext*>(textureContext);
         callbackContext->release();
-    }
-
-    static void PromiseImageDoneProc(void* textureContext) {
-        auto callbackContext = static_cast<PromiseImageCallbackContext*>(textureContext);
-        callbackContext->done();
         callbackContext->unref();
     }
 
@@ -92,11 +80,9 @@ private:
     sk_sp<SkPromiseImageTexture> fPromiseImageTexture;
     int                          fNumImages = 0;
     int                          fTotalFulfills = 0;
-    int                          fTotalReleases = 0;
-    int                          fUnreleasedFulfills = 0;
     int                          fDoneCnt = 0;
 
-    typedef SkRefCnt INHERITED;
+    using INHERITED = SkRefCnt;
 };
 
 // This class consolidates tracking & extraction of the original image data from an skp,
@@ -123,7 +109,8 @@ private:
 // all the replaying is complete. This will pin the GrBackendTextures in VRAM.
 class DDLPromiseImageHelper {
 public:
-    DDLPromiseImageHelper() = default;
+    DDLPromiseImageHelper(const SkYUVAPixmapInfo::SupportedDataTypes& supportedYUVADataTypes)
+            : fSupportedYUVADataTypes(supportedYUVADataTypes) {}
     ~DDLPromiseImageHelper() = default;
 
     // Convert the SkPicture into SkData replacing all the SkImages with an index.
@@ -154,7 +141,7 @@ private:
 
         int index() const { return fIndex; }
         uint32_t originalUniqueID() const { return fOriginalUniqueID; }
-        bool isYUV() const { return SkToBool(fYUVData.get()); }
+        bool isYUV() const { return fYUVAPixmaps.isValid(); }
 
         int overallWidth() const { return fImageInfo.width(); }
         int overallHeight() const { return fImageInfo.height(); }
@@ -162,18 +149,11 @@ private:
         SkAlphaType overallAlphaType() const { return fImageInfo.alphaType(); }
         sk_sp<SkColorSpace> refOverallColorSpace() const { return fImageInfo.refColorSpace(); }
 
-        SkYUVColorSpace yuvColorSpace() const {
-            SkASSERT(this->isYUV());
-            return fYUVColorSpace;
-        }
-        const SkYUVAIndex* yuvaIndices() const {
-            SkASSERT(this->isYUV());
-            return fYUVAIndices;
-        }
+        const SkYUVAInfo& yuvaInfo() const { return fYUVAPixmaps.yuvaInfo(); }
+
         const SkPixmap& yuvPixmap(int index) const {
             SkASSERT(this->isYUV());
-            SkASSERT(index >= 0 && index < SkYUVASizeInfo::kMaxCount);
-            return fYUVPlanes[index];
+            return fYUVAPixmaps.planes()[index];
         }
 
         const SkBitmap& baseLevel() const {
@@ -182,7 +162,7 @@ private:
         }
         // This returns an array of all the available mipLevels - suitable for passing into
         // createBackendTexture.
-        const std::unique_ptr<SkPixmap[]> normalMipLevels() const;
+        std::unique_ptr<SkPixmap[]> normalMipLevels() const;
         int numMipLevels() const;
 
         void setCallbackContext(int index, sk_sp<PromiseImageCallbackContext> callbackContext) {
@@ -215,18 +195,8 @@ private:
 
         void setMipLevels(const SkBitmap& baseLevel, std::unique_ptr<SkMipmap> mipLevels);
 
-        void setYUVData(sk_sp<SkCachedData> yuvData,
-                        SkYUVAIndex yuvaIndices[SkYUVAIndex::kIndexCount],
-                        SkYUVColorSpace cs) {
-            fYUVData = yuvData;
-            memcpy(fYUVAIndices, yuvaIndices, sizeof(fYUVAIndices));
-            fYUVColorSpace = cs;
-        }
-        void addYUVPlane(int index, const SkImageInfo& ii, const void* plane, size_t widthBytes) {
-            SkASSERT(this->isYUV());
-            SkASSERT(index >= 0 && index < SkYUVASizeInfo::kMaxCount);
-            fYUVPlanes[index].reset(ii, plane, widthBytes);
-        }
+        /** Takes ownership of the plane data. */
+        void setYUVPlanes(SkYUVAPixmaps yuvaPixmaps) { fYUVAPixmaps = std::move(yuvaPixmaps); }
 
     private:
         const int                          fIndex;                // index in the 'fImageInfo' array
@@ -239,10 +209,7 @@ private:
         std::unique_ptr<SkMipmap>          fMipLevels;
 
         // CPU-side cache of a YUV SkImage's contents
-        sk_sp<SkCachedData>                fYUVData;       // when !null, this is a YUV image
-        SkYUVColorSpace                    fYUVColorSpace = kJPEG_SkYUVColorSpace;
-        SkYUVAIndex                        fYUVAIndices[SkYUVAIndex::kIndexCount];
-        SkPixmap                           fYUVPlanes[SkYUVASizeInfo::kMaxCount];
+        SkYUVAPixmaps                      fYUVAPixmaps;
 
         // Up to SkYUVASizeInfo::kMaxCount for a YUVA image. Only one for a normal image.
         sk_sp<PromiseImageCallbackContext> fCallbackContexts[SkYUVASizeInfo::kMaxCount];
@@ -257,7 +224,7 @@ private:
     };
 
     static void CreateBETexturesForPromiseImage(GrDirectContext*, PromiseImageInfo*);
-    static void DeleteBETexturesForPromiseImage(GrDirectContext*, PromiseImageInfo*);
+    static void DeleteBETexturesForPromiseImage(PromiseImageInfo*);
 
     static sk_sp<SkImage> CreatePromiseImages(const void* rawData, size_t length, void* ctxIn);
 
@@ -274,6 +241,7 @@ private:
     // returns -1 on failure
     int findOrDefineImage(SkImage* image);
 
+    SkYUVAPixmapInfo::SupportedDataTypes fSupportedYUVADataTypes;
     SkTArray<PromiseImageInfo> fImageInfo;
 };
 

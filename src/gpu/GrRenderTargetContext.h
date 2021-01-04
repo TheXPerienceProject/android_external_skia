@@ -59,7 +59,7 @@ class SkVertices;
 /**
  * A helper object to orchestrate commands (draws, etc...) for GrSurfaces that are GrRenderTargets.
  */
-class GrRenderTargetContext : public GrSurfaceContext, public GrOpsTaskClosedObserver {
+class GrRenderTargetContext : public GrSurfaceContext {
 public:
     static std::unique_ptr<GrRenderTargetContext> Make(
             GrRecordingContext*, GrColorType, sk_sp<SkColorSpace>, sk_sp<GrSurfaceProxy>,
@@ -123,14 +123,14 @@ public:
             int sampleCnt, GrSurfaceOrigin, const SkSurfaceProps*,
             sk_sp<GrRefCntedCallback> releaseHelper);
 
-    static std::unique_ptr<GrRenderTargetContext> MakeFromBackendTextureAsRenderTarget(
-            GrRecordingContext*, GrColorType, sk_sp<SkColorSpace>, const GrBackendTexture&,
-            int sampleCnt, GrSurfaceOrigin, const SkSurfaceProps*);
-
     static std::unique_ptr<GrRenderTargetContext> MakeFromBackendRenderTarget(
-            GrRecordingContext*, GrColorType, sk_sp<SkColorSpace>, const GrBackendRenderTarget&,
-            GrSurfaceOrigin, const SkSurfaceProps*, ReleaseProc releaseProc,
-            ReleaseContext releaseCtx);
+            GrRecordingContext*,
+            GrColorType,
+            sk_sp<SkColorSpace>,
+            const GrBackendRenderTarget&,
+            GrSurfaceOrigin,
+            const SkSurfaceProps*,
+            sk_sp<GrRefCntedCallback> releaseHelper);
 
     static std::unique_ptr<GrRenderTargetContext> MakeFromVulkanSecondaryCB(
             GrRecordingContext*, const SkImageInfo&, const GrVkDrawableInfo&,
@@ -584,9 +584,7 @@ public:
 
     // Provides access to functions that aren't part of the public API.
     GrRenderTargetContextPriv priv();
-    const GrRenderTargetContextPriv priv() const;
-
-    void wasClosed(const GrOpsTask& task) override;
+    const GrRenderTargetContextPriv priv() const;  // NOLINT(readability-const-return-type)
 
 #if GR_TEST_UTILS
     bool testingOnly_IsInstantiated() const { return this->asSurfaceProxy()->isInstantiated(); }
@@ -600,6 +598,7 @@ private:
     GrAAType chooseAAType(GrAA);
 
     friend class GrClipStackClip;               // for access to getOpsTask
+    friend class GrClipStack;                   // ""
     friend class GrOnFlushResourceProvider;     // for access to getOpsTask (http://skbug.com/9357)
 
     friend class GrRenderTargetContextPriv;
@@ -682,7 +681,7 @@ private:
     void drawShapeUsingPathRenderer(const GrClip*, GrPaint&&, GrAA, const SkMatrix&,
                                     const GrStyledShape&, bool attemptShapeFallback = true);
 
-    void addOp(std::unique_ptr<GrOp>);
+    void addOp(GrOp::Owner);
 
     // Allows caller of addDrawOp to know which op list an op will be added to.
     using WillAddOpFn = void(GrOp*, uint32_t opsTaskID);
@@ -692,7 +691,7 @@ private:
     // another op after the function is called (either before addDrawOp returns or some time later).
     //
     // If the clip pointer is null, no clipping will be performed.
-    void addDrawOp(const GrClip*, std::unique_ptr<GrDrawOp>,
+    void addDrawOp(const GrClip*, GrOp::Owner,
                    const std::function<WillAddOpFn>& = std::function<WillAddOpFn>());
 
     // Makes a copy of the proxy if it is necessary for the draw and places the texture that should
@@ -717,11 +716,14 @@ private:
     bool fManagedOpsTask;
 
     int fNumStencilSamples = 0;
+
+    GrDstSampleType fDstSampleType = GrDstSampleType::kNone;
+
 #if GR_TEST_UTILS
     bool fPreserveOpsOnFullClear_TestingOnly = false;
 #endif
     SkGlyphRunListPainter fGlyphPainter;
-    typedef GrSurfaceContext INHERITED;
+    using INHERITED = GrSurfaceContext;
 };
 
 #endif

@@ -16,15 +16,20 @@ class GrAuditTrail;
 class GrBackendFormat;
 class GrDrawingManager;
 class GrOnFlushCallbackObject;
-class GrOpMemoryPool;
+class GrMemoryPool;
 class GrProgramDesc;
 class GrProgramInfo;
 class GrRecordingContextPriv;
 class GrSurfaceContext;
 class GrSurfaceProxy;
 class GrTextBlobCache;
+class GrThreadSafeCache;
 class SkArenaAlloc;
 class SkJSONWriter;
+
+#if GR_TEST_UTILS
+class SkString;
+#endif
 
 class GrRecordingContext : public GrImageContext {
 public:
@@ -60,6 +65,21 @@ public:
     }
 
     /**
+     * Gets the maximum supported texture size.
+     */
+    SK_API int maxTextureSize() const;
+
+    /**
+     * Gets the maximum supported render target size.
+     */
+    SK_API int maxRenderTargetSize() const;
+
+    /**
+     * Can a SkImage be created with the given color type.
+     */
+    SK_API bool colorTypeSupportedAsImage(SkColorType) const;
+
+    /**
      * Gets the maximum supported sample count for a color type. 1 is returned if only non-MSAA
      * rendering is supported for the color type. 0 is returned if rendering to this color type
      * is not supported at all.
@@ -68,23 +88,23 @@ public:
 
     // Provides access to functions that aren't part of the public API.
     GrRecordingContextPriv priv();
-    const GrRecordingContextPriv priv() const;
+    const GrRecordingContextPriv priv() const;  // NOLINT(readability-const-return-type)
 
     // The collection of specialized memory arenas for different types of data recorded by a
     // GrRecordingContext. Arenas does not maintain ownership of the pools it groups together.
     class Arenas {
     public:
-        Arenas(GrOpMemoryPool*, SkArenaAlloc*);
+        Arenas(GrMemoryPool*, SkArenaAlloc*);
 
         // For storing GrOp-derived classes recorded by a GrRecordingContext
-        GrOpMemoryPool* opMemoryPool() { return fOpMemoryPool; }
+        GrMemoryPool* opMemoryPool() { return fOpMemoryPool; }
 
         // For storing pipelines and other complex data as-needed by ops
         SkArenaAlloc* recordTimeAllocator() { return fRecordTimeAllocator; }
 
     private:
-        GrOpMemoryPool* fOpMemoryPool;
-        SkArenaAlloc*   fRecordTimeAllocator;
+        GrMemoryPool* fOpMemoryPool;
+        SkArenaAlloc* fRecordTimeAllocator;
     };
 
 protected:
@@ -103,12 +123,13 @@ protected:
         OwnedArenas& operator=(OwnedArenas&&);
 
     private:
-        std::unique_ptr<GrOpMemoryPool> fOpMemoryPool;
-        std::unique_ptr<SkArenaAlloc>   fRecordTimeAllocator;
+        std::unique_ptr<GrMemoryPool> fOpMemoryPool;
+        std::unique_ptr<SkArenaAlloc> fRecordTimeAllocator;
     };
 
     GrRecordingContext(sk_sp<GrContextThreadSafeProxy>);
-    void setupDrawingManager(bool sortOpsTasks, bool reduceOpsTaskSplitting);
+
+    bool init() override;
 
     void abandonContext() override;
 
@@ -153,6 +174,9 @@ protected:
 
     GrTextBlobCache* getTextBlobCache();
     const GrTextBlobCache* getTextBlobCache() const;
+
+    GrThreadSafeCache* threadSafeCache();
+    const GrThreadSafeCache* threadSafeCache() const;
 
     /**
      * Registers an object for flush-related callbacks. (See GrOnFlushCallbackObject.)
@@ -210,18 +234,18 @@ private:
 
     std::unique_ptr<GrAuditTrail>     fAuditTrail;
 
-#ifdef GR_TEST_UTILS
+#if GR_TEST_UTILS
     int fSuppressWarningMessages = 0;
 #endif
 
-    typedef GrImageContext INHERITED;
+    using INHERITED = GrImageContext;
 };
 
 /**
- * Safely cast a possibly-null recording context to direct context.
+ * Safely cast a possibly-null base context to direct context.
  */
-static inline GrDirectContext* GrAsDirectContext(GrRecordingContext* recording) {
-    return recording ? recording->asDirectContext() : nullptr;
+static inline GrDirectContext* GrAsDirectContext(GrContext_Base* base) {
+    return base ? base->asDirectContext() : nullptr;
 }
 
 #endif

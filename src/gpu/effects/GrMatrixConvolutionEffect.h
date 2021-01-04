@@ -31,22 +31,9 @@ public:
                                                      bool convolveAlpha,
                                                      const GrCaps&);
 
-    static std::unique_ptr<GrFragmentProcessor> MakeGaussian(GrRecordingContext*,
-                                                             GrSurfaceProxyView srcView,
-                                                             const SkIRect& srcBounds,
-                                                             const SkISize& kernelSize,
-                                                             SkScalar gain,
-                                                             SkScalar bias,
-                                                             const SkIPoint& kernelOffset,
-                                                             GrSamplerState::WrapMode,
-                                                             bool convolveAlpha,
-                                                             SkScalar sigmaX,
-                                                             SkScalar sigmaY,
-                                                             const GrCaps&);
-
     const SkIRect& bounds() const { return fBounds; }
     SkISize kernelSize() const { return fKernel.size(); }
-    const SkVector kernelOffset() const { return fKernelOffset; }
+    SkVector kernelOffset() const { return fKernelOffset; }
     bool kernelIsSampled() const { return fKernel.isSampled(); }
     const float *kernel() const { return fKernel.array().data(); }
     float kernelSampleGain() const { return fKernel.biasAndGain().fGain; }
@@ -138,7 +125,7 @@ private:
 
     GR_DECLARE_FRAGMENT_PROCESSOR_TEST
 
-    typedef GrFragmentProcessor INHERITED;
+    using INHERITED = GrFragmentProcessor;
 };
 
 #endif

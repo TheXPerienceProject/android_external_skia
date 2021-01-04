@@ -68,6 +68,9 @@ protected:
         this->onDrawIntoBitmap(bm);
 
         fBitmap = bm;
+        if (!fForceUpdate) {
+            fBitmap.setImmutable();
+        }
     }
 
     void onDraw(int loops, SkCanvas* canvas) override {
@@ -115,7 +118,7 @@ protected:
     }
 
 private:
-    typedef Benchmark INHERITED;
+    using INHERITED = Benchmark;
 };
 
 /** Explicitly invoke some filter types to improve coverage of acceleration
@@ -202,7 +205,7 @@ protected:
 }
 
 private:
-    typedef BitmapBench INHERITED;
+    using INHERITED = BitmapBench;
 };
 
 /** Verify optimizations that test source alpha values. */
@@ -290,7 +293,7 @@ protected:
     }
 
 private:
-    typedef BitmapBench INHERITED;
+    using INHERITED = BitmapBench;
 };
 
 DEF_BENCH( return new BitmapBench(kN32_SkColorType, kPremul_SkAlphaType, false, false); )

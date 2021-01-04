@@ -36,7 +36,7 @@ public:
     }
 
     GrAppliedHardClip(GrAppliedHardClip&& that) = default;
-    GrAppliedHardClip(const GrAppliedHardClip&) = delete;
+    explicit GrAppliedHardClip(const GrAppliedHardClip&) = default;
 
     const GrScissorState& scissorState() const { return fScissorState; }
     const GrWindowRectsState& windowRectsState() const { return fWindowRectsState; }
@@ -50,6 +50,10 @@ public:
      */
     bool addScissor(const SkIRect& irect, SkRect* clippedDrawBounds) {
         return fScissorState.intersect(irect) && clippedDrawBounds->intersect(SkRect::Make(irect));
+    }
+
+    void setScissor(const SkIRect& irect) {
+        fScissorState.set(irect);
     }
 
     void addWindowRectangles(const GrWindowRectsState& windowState) {

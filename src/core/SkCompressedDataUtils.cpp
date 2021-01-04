@@ -10,6 +10,7 @@
 #include "include/core/SkColorPriv.h"
 #include "include/core/SkData.h"
 #include "include/private/SkColorData.h"
+#include "include/private/SkTPin.h"
 #include "src/core/SkMathPriv.h"
 #include "src/core/SkMipmap.h"
 
@@ -275,6 +276,19 @@ size_t SkCompressedDataSize(SkImage::CompressionType type, SkISize dimensions,
     }
 
     return totalSize;
+}
+
+size_t SkCompressedBlockSize(SkImage::CompressionType type) {
+    switch (type) {
+        case SkImage::CompressionType::kNone:
+            return 0;
+        case SkImage::CompressionType::kETC2_RGB8_UNORM:
+            return sizeof(ETC1Block);
+        case SkImage::CompressionType::kBC1_RGB8_UNORM:
+        case SkImage::CompressionType::kBC1_RGBA8_UNORM:
+            return sizeof(BC1Block);
+    }
+    SkUNREACHABLE;
 }
 
 size_t SkCompressedFormatDataSize(SkImage::CompressionType compressionType,

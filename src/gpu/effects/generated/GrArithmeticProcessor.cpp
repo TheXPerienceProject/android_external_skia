@@ -10,6 +10,7 @@
  **************************************************************************************************/
 #include "GrArithmeticProcessor.h"
 
+#include "src/core/SkUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -29,10 +30,10 @@ public:
         (void)enforcePMColor;
         kVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, kFloat4_GrSLType,
                                                 "k");
-        SkString _sample385 = this->invokeChild(0, args);
+        SkString _sample0 = this->invokeChild(0, args);
         fragBuilder->codeAppendf(
-                R"SkSL(half4 src = %s;)SkSL", _sample385.c_str());
-        SkString _sample416 = this->invokeChild(1, args);
+                R"SkSL(half4 src = %s;)SkSL", _sample0.c_str());
+        SkString _sample1 = this->invokeChild(1, args);
         fragBuilder->codeAppendf(
                 R"SkSL(
 half4 dst = %s;
@@ -41,7 +42,7 @@ half4 dst = %s;
     %s.xyz = min(%s.xyz, %s.w);
 }
 )SkSL",
-                _sample416.c_str(), args.fOutputColor, args.fUniformHandler->getUniformCStr(kVar),
+                _sample1.c_str(), args.fOutputColor, args.fUniformHandler->getUniformCStr(kVar),
                 args.fUniformHandler->getUniformCStr(kVar),
                 args.fUniformHandler->getUniformCStr(kVar),
                 args.fUniformHandler->getUniformCStr(kVar),
@@ -62,7 +63,7 @@ GrGLSLFragmentProcessor* GrArithmeticProcessor::onCreateGLSLInstance() const {
 }
 void GrArithmeticProcessor::onGetGLSLProcessorKey(const GrShaderCaps& caps,
                                                   GrProcessorKeyBuilder* b) const {
-    b->add32((int32_t)enforcePMColor);
+    b->add32((uint32_t)enforcePMColor);
 }
 bool GrArithmeticProcessor::onIsEqual(const GrFragmentProcessor& other) const {
     const GrArithmeticProcessor& that = other.cast<GrArithmeticProcessor>();
@@ -71,6 +72,7 @@ bool GrArithmeticProcessor::onIsEqual(const GrFragmentProcessor& other) const {
     if (enforcePMColor != that.enforcePMColor) return false;
     return true;
 }
+bool GrArithmeticProcessor::usesExplicitReturn() const { return false; }
 GrArithmeticProcessor::GrArithmeticProcessor(const GrArithmeticProcessor& src)
         : INHERITED(kGrArithmeticProcessor_ClassID, src.optimizationFlags())
         , k(src.k)
@@ -78,8 +80,14 @@ GrArithmeticProcessor::GrArithmeticProcessor(const GrArithmeticProcessor& src)
     this->cloneAndRegisterAllChildProcessors(src);
 }
 std::unique_ptr<GrFragmentProcessor> GrArithmeticProcessor::clone() const {
-    return std::unique_ptr<GrFragmentProcessor>(new GrArithmeticProcessor(*this));
+    return std::make_unique<GrArithmeticProcessor>(*this);
 }
+#if GR_TEST_UTILS
+SkString GrArithmeticProcessor::onDumpInfo() const {
+    return SkStringPrintf("(k=float4(%f, %f, %f, %f), enforcePMColor=%s)", k.x, k.y, k.z, k.w,
+                          (enforcePMColor ? "true" : "false"));
+}
+#endif
 GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrArithmeticProcessor);
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> GrArithmeticProcessor::TestCreate(GrProcessorTestData* d) {

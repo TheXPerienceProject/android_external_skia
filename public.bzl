@@ -232,12 +232,12 @@ BASE_SRCS_ALL = struct(
         "src/svg/**/*",  # Depends on xml, SkJpegCodec, and SkPngCodec.
         "src/xml/**/*",  # Avoid dragging in expat when not needed.
 
-        # Conflicting dependencies among Lua versions. See cl/107087297.
-        "src/utils/SkLua*",
-
         # Exclude all GL specific files
         "src/gpu/gl/*",
         "src/gpu/gl/builders/*",
+
+        # Exclude all WebGL specific files
+        "src/gpu/gl/webgl/*",
 
         # Currently exclude all vulkan specific files
         "src/gpu/vk/*",
@@ -289,6 +289,7 @@ PORTS_SRCS_UNIX = struct(
         "src/ports/*mozalloc*",
         "src/ports/*nacl*",
         "src/ports/*win*",
+        "src/ports/*NDK*",
         "src/ports/SkFontMgr_custom_directory_factory.cpp",
         "src/ports/SkFontMgr_custom_embedded_factory.cpp",
         "src/ports/SkFontMgr_custom_empty_factory.cpp",
@@ -324,6 +325,7 @@ PORTS_SRCS_ANDROID = struct(
         "src/ports/*mozalloc*",
         "src/ports/*nacl*",
         "src/ports/*win*",
+        "src/ports/*NDK*",  # TODO (scroggo): enable NDK decoding/encoding in Google3
         "src/ports/SkDebug_stdio.cpp",
         "src/ports/SkFontMgr_custom_directory_factory.cpp",
         "src/ports/SkFontMgr_custom_embedded_factory.cpp",
@@ -360,6 +362,7 @@ PORTS_SRCS_IOS = struct(
         "src/ports/*mozalloc*",
         "src/ports/*nacl*",
         "src/ports/*win*",
+        "src/ports/*NDK*",
         "src/ports/SkFontMgr_custom.cpp",
         "src/ports/SkFontMgr_custom_directory.cpp",
         "src/ports/SkFontMgr_custom_embedded.cpp",
@@ -393,7 +396,7 @@ PORTS_SRCS_WASM = struct(
         # commented lines below left in because they indicate specifically what is
         # included here and not in other PORTS_SRCS lists.
         "src/ports/*FontConfig*",
-        "src/ports/*FreeType*",
+        #"src/ports/*FreeType*",
         "src/ports/*WIC*",
         "src/ports/*CG*",
         "src/ports/*android*",
@@ -403,12 +406,13 @@ PORTS_SRCS_WASM = struct(
         "src/ports/*mozalloc*",
         "src/ports/*nacl*",
         "src/ports/*win*",
+        "src/ports/*NDK*",
         #"src/ports/SkDebug_stdio.cpp",
-        "src/ports/SkFontMgr_custom.cpp",
+        #"src/ports/SkFontMgr_custom.cpp",
         "src/ports/SkFontMgr_custom_directory.cpp",
         "src/ports/SkFontMgr_custom_directory_factory.cpp",
-        "src/ports/SkFontMgr_custom_embedded.cpp",
-        "src/ports/SkFontMgr_custom_embedded_factory.cpp",
+        #"src/ports/SkFontMgr_custom_embedded.cpp",
+        #"src/ports/SkFontMgr_custom_embedded_factory.cpp",
         "src/ports/SkFontMgr_custom_empty.cpp",
         "src/ports/SkFontMgr_custom_empty_factory.cpp",
         # "src/ports/SkFontMgr_empty_factory.cpp",
@@ -441,6 +445,7 @@ PORTS_SRCS_FUCHSIA = struct(
         "src/ports/*mozalloc*",
         "src/ports/*nacl*",
         "src/ports/*win*",
+        "src/ports/*NDK*",
         #"src/ports/SkDebug_stdio.cpp",
         #"src/ports/SkFontMgr_custom.cpp",
         "src/ports/SkFontMgr_custom_directory.cpp",
@@ -561,12 +566,13 @@ DM_SRCS_ALL = struct(
         "dm/*.h",
         "experimental/pipe/*.cpp",
         "experimental/pipe/*.h",
-        "experimental/svg/model/*.cpp",
-        "experimental/svg/model/*.h",
         "gm/*.cpp",
         "gm/*.h",
         "gm/verifiers/*.cpp",
         "gm/verifiers/*.h",
+        # TODO(fmalita): SVG sources should not be included here
+        "modules/svg/include/*.h",
+        "modules/svg/src/*.cpp",
         "src/utils/SkMultiPictureDocument.cpp",
         "src/xml/*.cpp",
         "tests/*.cpp",
@@ -740,6 +746,7 @@ def base_defines(os_conditions):
                 "SK_ENCODE_PNG",
                 "SK_ENCODE_WEBP",
                 "SK_R32_SHIFT=16",
+                "SK_GL",
             ],
             # ANDROID
             [
@@ -748,6 +755,7 @@ def base_defines(os_conditions):
                 "SK_CODEC_DECODES_WEBP",
                 "SK_ENCODE_PNG",
                 "SK_ENCODE_WEBP",
+                "SK_GL",
             ],
             # IOS
             [
@@ -755,11 +763,13 @@ def base_defines(os_conditions):
                 "SK_BUILD_NO_OPTS",
                 "SKNX_NO_SIMD",
                 "SK_NO_COMMAND_BUFFER",  # Test tools that use thread_local.
+                "SK_GL",
             ],
             # WASM
             [
                 "SK_DISABLE_LEGACY_SHADERCONTEXT",
                 "SK_DISABLE_TRACING",
+                "SK_GL",
                 "GR_GL_CHECK_ALLOC_WITH_GET_ERROR=0",
                 "SK_SUPPORT_GPU=1",
                 "SK_DISABLE_AAA",
@@ -775,11 +785,13 @@ def base_defines(os_conditions):
                 "SK_ENCODE_PNG",
                 "SK_ENCODE_WEBP",
                 "SK_R32_SHIFT=16",
+                "SK_VULKAN",
             ],
             # MACOS
             [
                 "SK_BUILD_FOR_MAC",
                 "SK_BUILD_NO_OPTS",
+                "SK_GL",
             ],
         ],
     )
@@ -969,4 +981,25 @@ SKOTTIE_IOS_LIB_HDRS = [
 SKOTTIE_IOS_LIB_SDK_FRAMEWORKS = [
     "Foundation",
     "UIKit",
+]
+
+################################################################################
+## svg_lib
+################################################################################
+
+def svg_lib_hdrs():
+    return native.glob(["modules/svg/include/*.h"])
+
+def svg_lib_srcs():
+    return native.glob(["modules/svg/src/*.cpp"])
+
+################################################################################
+## svg_tool
+################################################################################
+
+SVG_TOOL_SRCS = [
+    "modules/svg/utils/SvgTool.cpp",
+    # TODO(benjaminwagner): Add "flags" target.
+    "tools/flags/CommandLineFlags.cpp",
+    "tools/flags/CommandLineFlags.h",
 ]

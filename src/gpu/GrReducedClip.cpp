@@ -675,10 +675,10 @@ GrReducedClip::ClipResult GrReducedClip::addAnalyticRRect(const SkRRect& deviceS
         return ClipResult::kClipped;
     }
 
-    SkPath deviceSpacePath;
+    SkPathBuilder deviceSpacePath;
     deviceSpacePath.setIsVolatile(true);
     deviceSpacePath.addRRect(deviceSpaceRRect);
-    return this->addAnalyticPath(deviceSpacePath, invert, aa);
+    return this->addAnalyticPath(deviceSpacePath.detach(), invert, aa);
 }
 
 GrReducedClip::ClipResult GrReducedClip::addAnalyticPath(const SkPath& deviceSpacePath,
@@ -923,11 +923,10 @@ std::unique_ptr<GrFragmentProcessor> GrReducedClip::finishAndDetachAnalyticEleme
         GrFPArgs args(context, matrixProvider, kNone_SkFilterQuality, &kCoverageColorInfo);
         shaderFP = as_SB(fShader)->asFragmentProcessor(args);
         if (shaderFP != nullptr) {
-            shaderFP = GrFragmentProcessor::SwizzleOutput(std::move(shaderFP), GrSwizzle::AAAA());
+            shaderFP = GrFragmentProcessor::MulInputByChildAlpha(std::move(shaderFP));
         }
     }
 
     // Compose the clip and shader FPs.
     return GrFragmentProcessor::Compose(std::move(clipFP), std::move(shaderFP));
 }
-

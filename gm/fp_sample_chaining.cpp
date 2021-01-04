@@ -9,7 +9,7 @@
 #include "include/core/SkFont.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "src/gpu/GrBitmapTextureMaker.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrRenderTargetContextPriv.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/ops/GrFillRectOp.h"
@@ -201,13 +201,13 @@ static std::unique_ptr<GrFragmentProcessor> wrap(std::unique_ptr<GrFragmentProce
                                                  EffectType effectType) {
     switch (effectType) {
         case kConstant:
-            return std::unique_ptr<GrFragmentProcessor>(new ConstantMatrixEffect(std::move(fp)));
+            return std::make_unique<ConstantMatrixEffect>(std::move(fp));
         case kUniform:
-            return std::unique_ptr<GrFragmentProcessor>(new UniformMatrixEffect(std::move(fp)));
+            return std::make_unique<UniformMatrixEffect>(std::move(fp));
         case kVariable:
-            return std::unique_ptr<GrFragmentProcessor>(new VariableMatrixEffect(std::move(fp)));
+            return std::make_unique<VariableMatrixEffect>(std::move(fp));
         case kExplicit:
-            return std::unique_ptr<GrFragmentProcessor>(new ExplicitCoordEffect(std::move(fp)));
+            return std::make_unique<ExplicitCoordEffect>(std::move(fp));
     }
     SkUNREACHABLE;
 }
@@ -277,19 +277,19 @@ DEF_SIMPLE_GPU_GM(fp_sample_chaining, ctx, rtCtx, canvas, 380, 306) {
 }
 
 const char* gConstantMatrixSkSL = R"(
-    in shader child;
-    void main(float2 xy, inout half4 color) {
-        color = sample(child, float3x3(0.5, 0.0, 0.0,
-                                       0.0, 1.0, 0.0,
-                                       0.0, 0.0, 1.0));
+    uniform shader child;
+    half4 main(float2 xy) {
+        return sample(child, float3x3(0.5, 0.0, 0.0,
+                                      0.0, 1.0, 0.0,
+                                      0.0, 0.0, 1.0));
     }
 )";
 
 const char* gUniformMatrixSkSL = R"(
-    in shader child;
+    uniform shader child;
     uniform float3x3 matrix;
-    void main(float2 xy, inout half4 color) {
-        color = sample(child, matrix);
+    half4 main(float2 xy) {
+        return sample(child, matrix);
     }
 )";
 
@@ -297,18 +297,18 @@ const char* gUniformMatrixSkSL = R"(
 // when scanning for sample matrices. With that pulled into a separate local, it's highly unlikely
 // we'll ever treat this as anything else.
 const char* gVariableMatrixSkSL = R"(
-    in shader child;
+    uniform shader child;
     uniform float3x3 matrix;
-    void main(float2 xy, inout half4 color) {
+    half4 main(float2 xy) {
         float3x3 varMatrix = matrix * 0.5;
-        color = sample(child, varMatrix);
+        return sample(child, varMatrix);
     }
 )";
 
 const char* gExplicitCoordSkSL = R"(
-    in shader child;
-    void main(float2 xy, inout half4 color) {
-        color = sample(child, xy + float2(0, 8));
+    uniform shader child;
+    half4 main(float2 xy) {
+        return sample(child, xy + float2(0, 8));
     }
 )";
 
@@ -336,10 +336,10 @@ DEF_SIMPLE_GM(sksl_sample_chaining, canvas, 380, 306) {
             builder.child("child") = shader;
             switch (effectType) {
                 case kUniform:
-                    builder.input("matrix") = SkMatrix::Scale(1.0f, 0.5f);
+                    builder.uniform("matrix") = SkMatrix::Scale(1.0f, 0.5f);
                     break;
                 case kVariable:
-                    builder.input("matrix") = SkMatrix::Translate(8, 0);
+                    builder.uniform("matrix") = SkMatrix::Translate(8, 0);
                     break;
                 default:
                     break;
