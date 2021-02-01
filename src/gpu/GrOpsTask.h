@@ -13,7 +13,6 @@
 #include "include/core/SkStrokeRec.h"
 #include "include/core/SkTypes.h"
 #include "include/gpu/GrRecordingContext.h"
-#include "include/private/SkColorData.h"
 #include "include/private/SkTArray.h"
 #include "include/private/SkTDArray.h"
 #include "src/core/SkArenaAlloc.h"
@@ -70,52 +69,10 @@ public:
         fSampledProxies.push_back(proxy);
     }
 
-    void addOp(GrDrawingManager* drawingMgr, GrOp::Owner op,
-               GrTextureResolveManager textureResolveManager, const GrCaps& caps) {
-        auto addDependency = [ drawingMgr, textureResolveManager, &caps, this ] (
-                GrSurfaceProxy* p, GrMipmapped mipmapped) {
-            this->addDependency(drawingMgr, p, mipmapped, textureResolveManager, caps);
-        };
+    void addOp(GrDrawingManager*, GrOp::Owner, GrTextureResolveManager, const GrCaps&);
 
-        op->visitProxies(addDependency);
-
-        this->recordOp(std::move(op), GrProcessorSet::EmptySetAnalysis(), nullptr, nullptr, caps);
-    }
-
-    void addDrawOp(GrDrawingManager* drawingMgr, GrOp::Owner op,
-                   const GrProcessorSet::Analysis& processorAnalysis,
-                   GrAppliedClip&& clip, const DstProxyView& dstProxyView,
-                   GrTextureResolveManager textureResolveManager, const GrCaps& caps) {
-        auto addDependency = [ drawingMgr, textureResolveManager, &caps, this ] (
-                GrSurfaceProxy* p, GrMipmapped mipmapped) {
-            this->addSampledTexture(p);
-            this->addDependency(drawingMgr, p, mipmapped, textureResolveManager, caps);
-        };
-
-        op->visitProxies(addDependency);
-        clip.visitProxies(addDependency);
-        if (dstProxyView.proxy()) {
-            if (GrDstSampleTypeUsesTexture(dstProxyView.dstSampleType())) {
-                this->addSampledTexture(dstProxyView.proxy());
-            }
-            addDependency(dstProxyView.proxy(), GrMipmapped::kNo);
-            if (this->target(0).proxy() == dstProxyView.proxy()) {
-                // Since we are sampling and drawing to the same surface we will need to use
-                // texture barriers.
-                SkASSERT(GrDstSampleTypeDirectlySamplesDst(dstProxyView.dstSampleType()));
-                fRenderPassXferBarriers |= GrXferBarrierFlags::kTexture;
-            }
-            SkASSERT(dstProxyView.dstSampleType() != GrDstSampleType::kAsInputAttachment ||
-                     dstProxyView.offset().isZero());
-        }
-
-        if (processorAnalysis.usesNonCoherentHWBlending()) {
-            fRenderPassXferBarriers |= GrXferBarrierFlags::kBlend;
-        }
-
-        this->recordOp(std::move(op), processorAnalysis, clip.doesClip() ? &clip : nullptr,
-                       &dstProxyView, caps);
-    }
+    void addDrawOp(GrDrawingManager*, GrOp::Owner, const GrProcessorSet::Analysis&,
+                   GrAppliedClip&&, const DstProxyView&, GrTextureResolveManager, const GrCaps&);
 
     void discard();
 
@@ -168,12 +125,7 @@ private:
     void setMustPreserveStencil() { fMustPreserveStencil = true; }
 
     // Must only be called if native color buffer clearing is enabled.
-    void setColorLoadOp(GrLoadOp op, const SkPMColor4f& color);
-    // Sets the clear color to transparent black
-    void setColorLoadOp(GrLoadOp op) {
-        static const SkPMColor4f kDefaultClearColor = {0.f, 0.f, 0.f, 0.f};
-        this->setColorLoadOp(op, kDefaultClearColor);
-    }
+    void setColorLoadOp(GrLoadOp op, std::array<float, 4> color = {0, 0, 0, 0});
 
     enum class CanDiscardPreviousOps : bool {
         kYes = true,
@@ -276,14 +228,13 @@ private:
     void gatherProxyIntervals(GrResourceAllocator*) const override;
 
     void recordOp(GrOp::Owner, GrProcessorSet::Analysis, GrAppliedClip*,
-                  const DstProxyView*, const GrCaps& caps);
+                  const DstProxyView*, const GrCaps&);
 
     void forwardCombine(const GrCaps&);
 
     ExpectedOutcome onMakeClosed(const GrCaps& caps, SkIRect* targetUpdateBounds) override;
 
     friend class OpsTaskTestingAccess;
-    friend class GrRenderTargetContextPriv; // for stencil clip state. TODO: this is invasive
 
     // The RTC and OpsTask have to work together to handle buffer clears. In most cases, buffer
     // clearing can be done natively, in which case the op list's load ops are sufficient. In other
@@ -298,7 +249,7 @@ private:
     GrAuditTrail*              fAuditTrail;
 
     GrLoadOp fColorLoadOp = GrLoadOp::kLoad;
-    SkPMColor4f fLoadClearColor = SK_PMColor4fTRANSPARENT;
+    std::array<float, 4> fLoadClearColor = {0, 0, 0, 0};
     StencilContent fInitialStencilContent = StencilContent::kDontCare;
     bool fMustPreserveStencil = false;
 

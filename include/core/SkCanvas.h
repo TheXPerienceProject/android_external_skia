@@ -32,6 +32,9 @@
 #include <memory>
 #include <vector>
 
+// Working on allow this to be undefined
+#define SK_SUPPORT_LEGACY_GETTOTALMATRIX
+
 class GrRecordingContext;
 class GrRenderTargetContext;
 class SkBaseDevice;
@@ -79,10 +82,6 @@ class SkVertices;
     This approach may be deprecated in the future.
 */
 class SK_API SkCanvas {
-    enum PrivateSaveLayerFlags {
-        kDontClipToLayer_PrivateSaveLayerFlag   = 1U << 31,
-    };
-
 public:
 
     /** Allocates raster SkCanvas that will draw directly into pixels.
@@ -254,6 +253,8 @@ public:
         If SkCanvas is associated with GPU surface, resolves all pending GPU operations.
         If SkCanvas is associated with raster surface, has no effect; raster draw
         operations are never deferred.
+
+        DEPRECATED: Replace usage with GrDirectContext::flush()
     */
     void flush();
 
@@ -632,10 +633,6 @@ public:
                                           1 << 3, //!< experimental: do not use
         // instead of matching previous layer's colortype, use F16
         kF16ColorType                   = 1 << 4,
-#ifdef SK_SUPPORT_LEGACY_CLIPTOLAYERFLAG
-        kDontClipToLayer_Legacy_SaveLayerFlag =
-           kDontClipToLayer_PrivateSaveLayerFlag, //!< deprecated
-#endif
     };
 
     typedef uint32_t SaveLayerFlags;
@@ -866,6 +863,9 @@ public:
 
         example: https://fiddle.skia.org/c/@Canvas_setMatrix
     */
+    void setMatrix(const SkM44& matrix);
+
+    // DEPRECATED -- use SkM44 version
     void setMatrix(const SkMatrix& matrix);
 
     /** Sets SkMatrix to the identity matrix.
@@ -2428,7 +2428,16 @@ public:
      */
     SkM44 getLocalToDevice() const;
 
-    /** Legacy version of getLocalToDevice(), which strips away any Z information, and
+    /**
+     *  Throws away the 3rd row and column in the matrix, so be warned.
+     */
+    SkMatrix getLocalToDeviceAs3x3() const {
+        return this->getLocalToDevice().asM33();
+    }
+
+#ifdef SK_SUPPORT_LEGACY_GETTOTALMATRIX
+    /** DEPRECATED
+     *  Legacy version of getLocalToDevice(), which strips away any Z information, and
      *  just returns a 3x3 version.
      *
      *  @return 3x3 version of getLocalToDevice()
@@ -2437,6 +2446,7 @@ public:
      *  example: https://fiddle.skia.org/c/@Clip
      */
     SkMatrix getTotalMatrix() const;
+#endif
 
     ///////////////////////////////////////////////////////////////////////////
 
@@ -2490,8 +2500,11 @@ protected:
 
     virtual void onMarkCTM(const char*) {}
     virtual void didConcat44(const SkM44&) {}
+    virtual void didSetM44(const SkM44&) {}
+#ifdef SK_SUPPORT_LEGACY_CANVASMATRIX33
     virtual void didConcat(const SkMatrix& ) {}
     virtual void didSetMatrix(const SkMatrix& ) {}
+#endif
     virtual void didTranslate(SkScalar, SkScalar) {}
     virtual void didScale(SkScalar, SkScalar) {}
 
@@ -2561,53 +2574,12 @@ protected:
     // returns false if the entire rectangle is entirely clipped out
     // If non-NULL, The imageFilter parameter will be used to expand the clip
     // and offscreen bounds for any margin required by the filter DAG.
-    bool clipRectBounds(const SkRect* bounds, SaveLayerFlags flags, SkIRect* intersection,
+    bool clipRectBounds(const SkRect* bounds, SkIRect* intersection,
                         const SkImageFilter* imageFilter = nullptr);
 
     SkBaseDevice* getTopDevice() const;
 
 private:
-    /** After calling saveLayer(), there can be any number of devices that make
-     up the top-most drawing area. LayerIter can be used to iterate through
-     those devices. Note that the iterator is only valid until the next API
-     call made on the canvas. Ownership of all pointers in the iterator stays
-     with the canvas, so none of them should be modified or deleted.
-     */
-    class LayerIter /*: SkNoncopyable*/ {
-    public:
-        /** Initialize iterator with canvas, and set values for 1st device */
-        LayerIter(SkCanvas*);
-        ~LayerIter();
-
-        /** Return true if the iterator is done */
-        bool done() const { return fDone; }
-        /** Cycle to the next device */
-        void next();
-
-        // These reflect the current device in the iterator
-
-        SkBaseDevice*   device() const;
-        const SkMatrix& matrix() const;
-        SkIRect clipBounds() const;
-        const SkPaint&  paint() const;
-        int             x() const;
-        int             y() const;
-
-    private:
-        // used to embed the SkDrawIter object directly in our instance, w/o
-        // having to expose that class def to the public. There is an assert
-        // in our constructor to ensure that fStorage is large enough
-        // (though needs to be a compile-time-assert!). We use intptr_t to work
-        // safely with 32 and 64 bit machines (to ensure the storage is enough)
-        intptr_t          fStorage[32];
-        class SkDrawIter* fImpl;    // this points at fStorage
-        SkPaint           fDefaultPaint;
-        SkIPoint          fDeviceOrigin;
-        bool              fDone;
-    };
-
-    static bool BoundsAffectsClip(SaveLayerFlags);
-
     static void DrawDeviceWithFilter(SkBaseDevice* src, const SkImageFilter* filter,
                                      SkBaseDevice* dst, const SkIPoint& dstOrigin,
                                      const SkMatrix& ctm);
@@ -2638,9 +2610,9 @@ private:
     sk_sp<SkMarkerStack> fMarkerStack;
 
     // the first N recs that can fit here mean we won't call malloc
-    static constexpr int kMCRecSize      = 128;  // most recent measurement
-    static constexpr int kMCRecCount     = 32;   // common depth for save/restores
-    static constexpr int kDeviceCMSize   = 64;   // most recent measurement
+    static constexpr int kMCRecSize      = 96; // most recent measurement
+    static constexpr int kMCRecCount     = 32; // common depth for save/restores
+    static constexpr int kDeviceCMSize   = 64; // most recent measurement
 
     intptr_t fMCRecStorage[kMCRecSize * kMCRecCount / sizeof(intptr_t)];
     intptr_t fDeviceCMStorage[kDeviceCMSize / sizeof(intptr_t)];
@@ -2663,7 +2635,7 @@ private:
 
     void doSave();
     void checkForDeferredSave();
-    void internalSetMatrix(const SkMatrix&);
+    void internalSetMatrix(const SkM44&);
 
     friend class SkAndroidFrameworkUtils;
     friend class SkCanvasPriv;      // needs kDontClipToLayer_PrivateSaveLayerFlag
@@ -2706,11 +2678,6 @@ private:
 
     // needs gettotalclip()
     friend class SkCanvasStateUtils;
-
-    // call this each time we attach ourselves to a device
-    //  - constructor
-    //  - internalSaveLayer
-    void setupDevice(SkBaseDevice*);
 
     void init(sk_sp<SkBaseDevice>);
 
@@ -2763,29 +2730,14 @@ private:
      *  us to do a fast quick reject in the common case.
      */
     bool   fIsScaleTranslate;
-    SkRect fDeviceClipBounds;
+    SkRect fQuickRejectBounds;
 
-    class AutoValidateClip {
-    public:
-        explicit AutoValidateClip(SkCanvas* canvas) : fCanvas(canvas) {
-            fCanvas->validateClip();
-        }
-        ~AutoValidateClip() { fCanvas->validateClip(); }
+    // Compute the clip's bounds based on all clipped SkDevice's reported device bounds transformed
+    // into the canvas' global space.
+    SkRect computeDeviceClipBounds() const;
 
-    private:
-        const SkCanvas* fCanvas;
-
-        AutoValidateClip(AutoValidateClip&&) = delete;
-        AutoValidateClip(const AutoValidateClip&) = delete;
-        AutoValidateClip& operator=(AutoValidateClip&&) = delete;
-        AutoValidateClip& operator=(const AutoValidateClip&) = delete;
-    };
-
-#ifdef SK_DEBUG
+    class AutoValidateClip;
     void validateClip() const;
-#else
-    void validateClip() const {}
-#endif
 
     std::unique_ptr<SkGlyphRunBuilder> fScratchGlyphRunBuilder;
 

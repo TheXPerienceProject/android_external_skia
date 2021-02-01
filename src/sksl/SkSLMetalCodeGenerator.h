@@ -14,7 +14,6 @@
 #include <unordered_set>
 
 #include "src/sksl/SkSLCodeGenerator.h"
-#include "src/sksl/SkSLMemoryLayout.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLBoolLiteral.h"
@@ -105,8 +104,12 @@ protected:
     };
 
     enum SpecialIntrinsic {
-        kTexture_SpecialIntrinsic,
+        kDistance_SpecialIntrinsic,
+        kDot_SpecialIntrinsic,
+        kLength_SpecialIntrinsic,
         kMod_SpecialIntrinsic,
+        kNormalize_SpecialIntrinsic,
+        kTexture_SpecialIntrinsic,
     };
 
     enum MetalIntrinsic {
@@ -117,6 +120,8 @@ protected:
         kGreaterThan_MetalIntrinsic,
         kGreaterThanEqual_MetalIntrinsic,
     };
+
+    static const char* OperatorName(Token::Kind op);
 
     class GlobalStructVisitor;
     void visitGlobalStruct(GlobalStructVisitor* visitor);
@@ -143,6 +148,8 @@ protected:
 
     void writeInterfaceBlocks();
 
+    void writeStructDefinitions();
+
     void writeFields(const std::vector<Type::Field>& fields, int parentOffset,
                      const InterfaceBlock* parentIntf = nullptr);
 
@@ -157,7 +164,13 @@ protected:
 
     String typeName(const Type& type);
 
-    void writeType(const Type& type);
+    bool writeStructDefinition(const Type& type);
+
+    void disallowArrayTypes(const Type& type);
+
+    void writeBaseType(const Type& type);
+
+    void writeArrayDimensions(const Type& type);
 
     void writeExtension(const Extension& ext);
 
@@ -248,6 +261,8 @@ protected:
 
     void writeSwitchStatement(const SwitchStatement& s);
 
+    void writeReturnStatementFromMain();
+
     void writeReturnStatement(const ReturnStatement& r);
 
     void writeProgramElement(const ProgramElement& e);
@@ -287,6 +302,7 @@ protected:
     std::unordered_set<String> fHelpers;
     int fUniformBuffer = -1;
     String fRTHeightName;
+    const FunctionDeclaration* fCurrentFunction = nullptr;
 
     using INHERITED = CodeGenerator;
 };

@@ -12,6 +12,7 @@
 #include <memory>
 #include <unordered_set>
 
+#include "include/private/SkTArray.h"
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLParser.h"
@@ -47,6 +48,7 @@
 #include "src/sksl/ir/SkSLPrefixExpression.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
 #include "src/sksl/ir/SkSLSetting.h"
+#include "src/sksl/ir/SkSLStructDefinition.h"
 #include "src/sksl/ir/SkSLSwitchCase.h"
 #include "src/sksl/ir/SkSLSwitchStatement.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
@@ -104,39 +106,6 @@ public:
     IRGenerator* fIR;
 };
 
-class AutoDisableInline {
-public:
-    AutoDisableInline(IRGenerator* ir, bool canInline = false)
-    : fIR(ir) {
-        fOldCanInline = ir->fCanInline;
-        fIR->fCanInline &= canInline;
-    }
-
-    ~AutoDisableInline() {
-        fIR->fCanInline = fOldCanInline;
-    }
-
-    IRGenerator* fIR;
-    bool fOldCanInline;
-};
-
-IRGenerator::IRGenerator(const Context* context, Inliner* inliner, ErrorReporter& errorReporter)
-        : fContext(*context)
-        , fInliner(inliner)
-        , fErrors(errorReporter)
-        , fModifiers(new ModifiersPool()) {
-    SkASSERT(fInliner);
-}
-
-void IRGenerator::pushSymbolTable() {
-    auto childSymTable = std::make_shared<SymbolTable>(std::move(fSymbolTable), fIsBuiltinCode);
-    fSymbolTable = std::move(childSymTable);
-}
-
-void IRGenerator::popSymbolTable() {
-    fSymbolTable = fSymbolTable->fParent;
-}
-
 static void fill_caps(const SkSL::ShaderCapsClass& caps,
                       std::unordered_map<String, Program::Settings::Value>* capsMap) {
 #define CAP(name) capsMap->insert({String(#name), Program::Settings::Value(caps.name())})
@@ -158,6 +127,30 @@ static void fill_caps(const SkSL::ShaderCapsClass& caps,
     CAP(builtinFMASupport);
     CAP(builtinDeterminantSupport);
 #undef CAP
+}
+
+IRGenerator::IRGenerator(const Context* context,
+                         const ShaderCapsClass* caps,
+                         ErrorReporter& errorReporter)
+        : fContext(*context)
+        , fCaps(caps)
+        , fErrors(errorReporter)
+        , fModifiers(new ModifiersPool()) {
+    if (fCaps) {
+        fill_caps(*fCaps, &fCapsMap);
+    } else {
+        fCapsMap.insert({String("integerSupport"), Program::Settings::Value(true)});
+    }
+
+}
+
+void IRGenerator::pushSymbolTable() {
+    auto childSymTable = std::make_shared<SymbolTable>(std::move(fSymbolTable), fIsBuiltinCode);
+    fSymbolTable = std::move(childSymTable);
+}
+
+void IRGenerator::popSymbolTable() {
+    fSymbolTable = fSymbolTable->fParent;
 }
 
 std::unique_ptr<Extension> IRGenerator::convertExtension(int offset, StringFragment name) {
@@ -201,6 +194,9 @@ std::unique_ptr<Statement> IRGenerator::convertSingleStatement(const ASTNode& st
             return this->convertContinue(statement);
         case ASTNode::Kind::kDiscard:
             return this->convertDiscard(statement);
+        case ASTNode::Kind::kType:
+            // TODO: add IRNode for struct definition inside a function
+            return nullptr;
         default:
             // it's an expression
             std::unique_ptr<Statement> result = this->convertExpressionStatement(statement);
@@ -285,8 +281,7 @@ StatementArray IRGenerator::convertVarDeclarations(const ASTNode& decls,
                       "variables of type '" + baseType->displayName() + "' must be global");
     }
     if (fKind != Program::kFragmentProcessor_Kind) {
-        if ((modifiers.fFlags & Modifiers::kIn_Flag) &&
-            baseType->typeKind() == Type::TypeKind::kMatrix) {
+        if ((modifiers.fFlags & Modifiers::kIn_Flag) && baseType->isMatrix()) {
             fErrors.error(decls.fOffset, "'in' variables may not have matrix type");
         }
         if ((modifiers.fFlags & Modifiers::kIn_Flag) &&
@@ -336,10 +331,10 @@ StatementArray IRGenerator::convertVarDeclarations(const ASTNode& decls,
                           "'srgb_unpremul' is only permitted on 'uniform' variables");
         }
         auto validColorXformType = [](const Type& t) {
-            return t.typeKind() == Type::TypeKind::kVector && t.componentType().isFloat() &&
+            return t.isVector() && t.componentType().isFloat() &&
                    (t.columns() == 3 || t.columns() == 4);
         };
-        if (!validColorXformType(*baseType) && !(baseType->typeKind() == Type::TypeKind::kArray &&
+        if (!validColorXformType(*baseType) && !(baseType->isArray() &&
                                                  validColorXformType(baseType->componentType()))) {
             fErrors.error(decls.fOffset,
                           "'srgb_unpremul' is only permitted on half3, half4, float3, or float4 "
@@ -351,8 +346,7 @@ StatementArray IRGenerator::convertVarDeclarations(const ASTNode& decls,
             fErrors.error(decls.fOffset, "'varying' is only permitted in runtime effects");
         }
         if (!baseType->isFloat() &&
-            !(baseType->typeKind() == Type::TypeKind::kVector &&
-              baseType->componentType().isFloat())) {
+            !(baseType->isVector() && baseType->componentType().isFloat())) {
             fErrors.error(decls.fOffset, "'varying' must be float scalar or vector");
         }
     }
@@ -369,11 +363,7 @@ StatementArray IRGenerator::convertVarDeclarations(const ASTNode& decls,
     this->checkModifiers(decls.fOffset, modifiers, permitted);
 
     StatementArray varDecls;
-    bool firstDecl = true;
     for (; declarationsIter != decls.end(); ++declarationsIter) {
-        AutoDisableInline disableInline(this, /*canInline=*/firstDecl);
-        firstDecl = false;
-
         const ASTNode& varDecl = *declarationsIter;
         if (modifiers.fLayout.fLocation == 0 && modifiers.fLayout.fIndex == 0 &&
             (modifiers.fFlags & Modifiers::kOut_Flag) && fKind == Program::kFragment_Kind &&
@@ -383,36 +373,36 @@ StatementArray IRGenerator::convertVarDeclarations(const ASTNode& decls,
         }
         const ASTNode::VarData& varData = varDecl.getVarData();
         const Type* type = baseType;
-        ExpressionArray sizes;
-        sizes.reserve_back(varData.fSizeCount);
+        int arraySize = 0;
         auto iter = varDecl.begin();
-        for (size_t i = 0; i < varData.fSizeCount; ++i, ++iter) {
-            const ASTNode& rawSize = *iter;
-            if (rawSize) {
-                auto size = this->coerce(this->convertExpression(rawSize), *fContext.fInt_Type);
-                if (!size) {
-                    return {};
+        if (iter != varDecl.end()) {
+            if (varData.fIsArray) {
+                if (type->isOpaque()) {
+                    fErrors.error(type->fOffset,
+                                  "opaque type '" + type->name() + "' may not be used in an array");
                 }
-                String name(type->name());
-                int64_t count;
-                if (size->is<IntLiteral>()) {
+                const ASTNode& rawSize = *iter++;
+                if (rawSize) {
+                    auto size = this->coerce(this->convertExpression(rawSize), *fContext.fInt_Type);
+                    if (!size) {
+                        return {};
+                    }
+                    String name(type->name());
+                    int64_t count;
+                    if (!size->is<IntLiteral>()) {
+                        fErrors.error(size->fOffset, "array size must be an integer");
+                        return {};
+                    }
                     count = size->as<IntLiteral>().value();
                     if (count <= 0) {
                         fErrors.error(size->fOffset, "array size must be positive");
                         return {};
                     }
-                    name += "[" + to_string(count) + "]";
+                    arraySize = count;
                 } else {
-                    fErrors.error(size->fOffset, "array size must be specified");
-                    return {};
+                    arraySize = Type::kUnsizedArray;
                 }
-                type = fSymbolTable->takeOwnershipOfSymbol(
-                        std::make_unique<Type>(name, Type::TypeKind::kArray, *type, (int)count));
-                sizes.push_back(std::move(size));
-            } else {
-                type = fSymbolTable->takeOwnershipOfSymbol(std::make_unique<Type>(
-                        type->name() + "[]", Type::TypeKind::kArray, *type, Type::kUnsizedArray));
-                sizes.push_back(nullptr);
+                type = fSymbolTable->addArrayDimension(type, arraySize);
             }
         }
         auto var = std::make_unique<Variable>(varDecl.fOffset, fModifiers->addToPool(modifiers),
@@ -423,7 +413,13 @@ StatementArray IRGenerator::convertVarDeclarations(const ASTNode& decls,
             fRTAdjust = var.get();
         }
         std::unique_ptr<Expression> value;
-        if (iter != varDecl.end()) {
+        if (iter == varDecl.end()) {
+            if (arraySize == Type::kUnsizedArray) {
+                fErrors.error(varDecl.fOffset,
+                              "arrays without an explicit size must use an initializer expression");
+                return {};
+            }
+        } else {
             value = this->convertExpression(*iter);
             if (!value) {
                 return {};
@@ -441,8 +437,8 @@ StatementArray IRGenerator::convertVarDeclarations(const ASTNode& decls,
         if (symbol && storage == Variable::Storage::kGlobal && var->name() == "sk_FragColor") {
             // Already defined, ignore.
         } else {
-            varDecls.push_back(std::make_unique<VarDeclaration>(
-                    var.get(), baseType, std::move(sizes), std::move(value)));
+            varDecls.push_back(std::make_unique<VarDeclaration>(var.get(), baseType, arraySize,
+                                                                std::move(value)));
             fSymbolTable->add(std::move(var));
         }
     }
@@ -509,11 +505,8 @@ std::unique_ptr<Statement> IRGenerator::convertIf(const ASTNode& n) {
             return std::make_unique<Nop>();
         }
     }
-    auto ifStmt = std::make_unique<IfStatement>(n.fOffset, n.getBool(), std::move(test),
-                                                std::move(ifTrue), std::move(ifFalse));
-    fInliner->ensureScopedBlocks(ifStmt->ifTrue().get(), ifStmt.get());
-    fInliner->ensureScopedBlocks(ifStmt->ifFalse().get(), ifStmt.get());
-    return std::move(ifStmt);
+    return std::make_unique<IfStatement>(n.fOffset, n.getBool(), std::move(test),
+                                         std::move(ifTrue), std::move(ifFalse));
 }
 
 std::unique_ptr<Statement> IRGenerator::convertFor(const ASTNode& f) {
@@ -531,17 +524,14 @@ std::unique_ptr<Statement> IRGenerator::convertFor(const ASTNode& f) {
     ++iter;
     std::unique_ptr<Expression> test;
     if (*iter) {
-        AutoDisableInline disableInline(this);
         test = this->coerce(this->convertExpression(*iter), *fContext.fBool_Type);
         if (!test) {
             return nullptr;
         }
-
     }
     ++iter;
     std::unique_ptr<Expression> next;
     if (*iter) {
-        AutoDisableInline disableInline(this);
         next = this->convertExpression(*iter);
         if (!next) {
             return nullptr;
@@ -552,22 +542,16 @@ std::unique_ptr<Statement> IRGenerator::convertFor(const ASTNode& f) {
     if (!statement) {
         return nullptr;
     }
-    auto forStmt = std::make_unique<ForStatement>(f.fOffset, std::move(initializer),
-                                                  std::move(test), std::move(next),
-                                                  std::move(statement), fSymbolTable);
-    fInliner->ensureScopedBlocks(forStmt->statement().get(), forStmt.get());
-    return std::move(forStmt);
+    return std::make_unique<ForStatement>(f.fOffset, std::move(initializer), std::move(test),
+                                          std::move(next), std::move(statement), fSymbolTable);
 }
 
 std::unique_ptr<Statement> IRGenerator::convertWhile(const ASTNode& w) {
     SkASSERT(w.fKind == ASTNode::Kind::kWhile);
     AutoLoopLevel level(this);
-    std::unique_ptr<Expression> test;
     auto iter = w.begin();
-    {
-        AutoDisableInline disableInline(this);
-        test = this->coerce(this->convertExpression(*(iter++)), *fContext.fBool_Type);
-    }
+    std::unique_ptr<Expression> test = this->coerce(this->convertExpression(*(iter++)),
+                                                    *fContext.fBool_Type);
     if (!test) {
         return nullptr;
     }
@@ -575,10 +559,7 @@ std::unique_ptr<Statement> IRGenerator::convertWhile(const ASTNode& w) {
     if (!statement) {
         return nullptr;
     }
-    auto whileStmt = std::make_unique<WhileStatement>(w.fOffset, std::move(test),
-                                                      std::move(statement));
-    fInliner->ensureScopedBlocks(whileStmt->statement().get(), whileStmt.get());
-    return std::move(whileStmt);
+    return std::make_unique<WhileStatement>(w.fOffset, std::move(test), std::move(statement));
 }
 
 std::unique_ptr<Statement> IRGenerator::convertDo(const ASTNode& d) {
@@ -589,17 +570,12 @@ std::unique_ptr<Statement> IRGenerator::convertDo(const ASTNode& d) {
     if (!statement) {
         return nullptr;
     }
-    std::unique_ptr<Expression> test;
-    {
-        AutoDisableInline disableInline(this);
-        test = this->coerce(this->convertExpression(*(iter++)), *fContext.fBool_Type);
-    }
+    std::unique_ptr<Expression> test =
+            this->coerce(this->convertExpression(*(iter++)), *fContext.fBool_Type);
     if (!test) {
         return nullptr;
     }
-    auto doStmt = std::make_unique<DoStatement>(d.fOffset, std::move(statement), std::move(test));
-    fInliner->ensureScopedBlocks(doStmt->statement().get(), doStmt.get());
-    return std::move(doStmt);
+    return std::make_unique<DoStatement>(d.fOffset, std::move(statement), std::move(test));
 }
 
 std::unique_ptr<Statement> IRGenerator::convertSwitch(const ASTNode& s) {
@@ -894,7 +870,7 @@ void IRGenerator::convertFunction(const ASTNode& f) {
     if (returnType == nullptr) {
         return;
     }
-    auto type_is_allowed = [&](const Type* t) {
+    auto typeIsAllowed = [&](const Type* t) {
 #if defined(SKSL_STANDALONE)
         return true;
 #else
@@ -903,8 +879,8 @@ void IRGenerator::convertFunction(const ASTNode& f) {
                type_to_grsltype(fContext, *t, &unusedSLType);
 #endif
     };
-    if (returnType->nonnullable() == *fContext.fFragmentProcessor_Type ||
-        !type_is_allowed(returnType)) {
+    if (returnType->isArray() || !typeIsAllowed(returnType) ||
+        returnType->nonnullable() == *fContext.fFragmentProcessor_Type) {
         fErrors.error(f.fOffset,
                       "functions may not return type '" + returnType->displayName() + "'");
         return;
@@ -924,15 +900,13 @@ void IRGenerator::convertFunction(const ASTNode& f) {
         if (!type) {
             return;
         }
-        for (int j = 1; j <= (int) pd.fSizeCount; j++) {
-            int size = (param.begin() + j)->getInt();
-            String name = type->name() + "[" + to_string(size) + "]";
-            type = fSymbolTable->takeOwnershipOfSymbol(
-                    std::make_unique<Type>(std::move(name), Type::TypeKind::kArray, *type, size));
+        if (pd.fIsArray) {
+            int arraySize = (paramIter++)->getInt();
+            type = fSymbolTable->addArrayDimension(type, arraySize);
         }
         // Only the (builtin) declarations of 'sample' are allowed to have FP parameters
         if ((type->nonnullable() == *fContext.fFragmentProcessor_Type && !fIsBuiltinCode) ||
-            !type_is_allowed(type)) {
+            !typeIsAllowed(type)) {
             fErrors.error(param.fOffset,
                           "parameters of type '" + type->displayName() + "' not allowed");
             return;
@@ -1099,6 +1073,20 @@ void IRGenerator::convertFunction(const ASTNode& f) {
     }
 }
 
+std::unique_ptr<StructDefinition> IRGenerator::convertStructDefinition(const ASTNode& node) {
+    SkASSERT(node.fKind == ASTNode::Kind::kType);
+
+    const Type* type = this->convertType(node);
+    if (!type) {
+        return nullptr;
+    }
+    if (!type->isStruct()) {
+        fErrors.error(node.fOffset, "expected a struct here, found '" + type->name() + "'");
+        return nullptr;
+    }
+    return std::make_unique<StructDefinition>(node.fOffset, *type);
+}
+
 std::unique_ptr<InterfaceBlock> IRGenerator::convertInterfaceBlock(const ASTNode& intf) {
     if (fKind != Program::kFragment_Kind &&
         fKind != Program::kVertex_Kind &&
@@ -1126,6 +1114,10 @@ std::unique_ptr<InterfaceBlock> IRGenerator::convertInterfaceBlock(const ASTNode
             }
             for (const auto& decl : decls) {
                 const VarDeclaration& vd = decl->as<VarDeclaration>();
+                if (vd.var().type().isOpaque()) {
+                    fErrors.error(decl->fOffset, "opaque type '" + vd.var().type().name() +
+                                                 "' is not permitted in an interface block");
+                }
                 if (haveRuntimeArray) {
                     fErrors.error(decl->fOffset,
                                 "only the last entry in an interface block may be a runtime-sized "
@@ -1142,46 +1134,36 @@ std::unique_ptr<InterfaceBlock> IRGenerator::convertInterfaceBlock(const ASTNode
                     fErrors.error(decl->fOffset,
                                 "initializers are not permitted on interface block fields");
                 }
-                if (vd.var().type().typeKind() == Type::TypeKind::kArray &&
+                if (vd.var().type().isArray() &&
                     vd.var().type().columns() == Type::kUnsizedArray) {
                     haveRuntimeArray = true;
                 }
             }
         }
     }
-    const Type* type =
-            old->takeOwnershipOfSymbol(std::make_unique<Type>(intf.fOffset, id.fTypeName, fields));
-    ExpressionArray sizes;
-    sizes.reserve_back(id.fSizeCount);
-    for (size_t i = 0; i < id.fSizeCount; ++i) {
+    const Type* type = old->takeOwnershipOfSymbol(std::make_unique<Type>(intf.fOffset, id.fTypeName,
+                                                                         fields));
+    int arraySize = 0;
+    if (id.fIsArray) {
         const ASTNode& size = *(iter++);
         if (size) {
             std::unique_ptr<Expression> converted = this->convertExpression(size);
             if (!converted) {
                 return nullptr;
             }
-            String name = type->name();
-            int64_t count;
-            if (converted->kind() == Expression::Kind::kIntLiteral) {
-                count = converted->as<IntLiteral>().value();
-                if (count <= 0) {
-                    fErrors.error(converted->fOffset, "array size must be positive");
-                    return nullptr;
-                }
-                name += "[" + to_string(count) + "]";
-            } else {
+            if (!converted->is<IntLiteral>()) {
                 fErrors.error(intf.fOffset, "array size must be specified");
                 return nullptr;
             }
-            type = symbols->takeOwnershipOfSymbol(
-                    std::make_unique<Type>(name, Type::TypeKind::kArray, *type, (int)count));
-            sizes.push_back(std::move(converted));
+            arraySize = converted->as<IntLiteral>().value();
+            if (arraySize <= 0) {
+                fErrors.error(converted->fOffset, "array size must be positive");
+                return nullptr;
+            }
         } else {
-            String name = String(type->name()) + "[]";
-            type = symbols->takeOwnershipOfSymbol(std::make_unique<Type>(
-                    name, Type::TypeKind::kArray, *type, Type::kUnsizedArray));
-            sizes.push_back(nullptr);
+            arraySize = Type::kUnsizedArray;
         }
+        type = symbols->addArrayDimension(type, arraySize);
     }
     const Variable* var = old->takeOwnershipOfSymbol(
             std::make_unique<Variable>(intf.fOffset,
@@ -1204,7 +1186,7 @@ std::unique_ptr<InterfaceBlock> IRGenerator::convertInterfaceBlock(const ASTNode
                                             var,
                                             id.fTypeName,
                                             id.fInstanceName,
-                                            std::move(sizes),
+                                            arraySize,
                                             symbols);
 }
 
@@ -1223,6 +1205,14 @@ bool IRGenerator::getConstantInt(const Expression& value, int64_t* out) {
     }
 }
 
+void IRGenerator::convertGlobalVarDeclarations(const ASTNode& decl) {
+    StatementArray decls = this->convertVarDeclarations(decl, Variable::Storage::kGlobal);
+    for (std::unique_ptr<Statement>& stmt : decls) {
+        fProgramElements->push_back(std::make_unique<GlobalVarDeclaration>(decl.fOffset,
+                                                                           std::move(stmt)));
+    }
+}
+
 void IRGenerator::convertEnum(const ASTNode& e) {
     if (fKind == Program::kPipelineStage_Kind) {
         fErrors.error(e.fOffset, "enum is not allowed here");
@@ -1232,8 +1222,9 @@ void IRGenerator::convertEnum(const ASTNode& e) {
     SkASSERT(e.fKind == ASTNode::Kind::kEnum);
     int64_t currentValue = 0;
     Layout layout;
-    ASTNode enumType(e.fNodes, e.fOffset, ASTNode::Kind::kType,
-                     ASTNode::TypeData(e.getString(), false, false));
+    ASTNode enumType(
+            e.fNodes, e.fOffset, ASTNode::Kind::kType,
+            ASTNode::TypeData(e.getString(), /*isStructDeclaration=*/false, /*isNullable=*/false));
     const Type* type = this->convertType(enumType);
     Modifiers modifiers(layout, Modifiers::kConst_Flag);
     std::shared_ptr<SymbolTable> oldTable = fSymbolTable;
@@ -1254,7 +1245,7 @@ void IRGenerator::convertEnum(const ASTNode& e) {
                 return;
             }
         }
-        value = std::unique_ptr<Expression>(new IntLiteral(fContext, e.fOffset, currentValue));
+        value = std::make_unique<IntLiteral>(fContext, e.fOffset, currentValue);
         ++currentValue;
         fSymbolTable->add(std::make_unique<Variable>(e.fOffset, fModifiers->addToPool(modifiers),
                                                      child.getString(), type, fIsBuiltinCode,
@@ -1274,7 +1265,7 @@ bool IRGenerator::typeContainsPrivateFields(const Type& type) {
     if (type.isPrivate()) {
         return true;
     }
-    if (type.typeKind() == Type::TypeKind::kStruct) {
+    if (type.isStruct()) {
         for (const auto& f : type.fields()) {
             if (this->typeContainsPrivateFields(*f.fType)) {
                 return true;
@@ -1286,50 +1277,50 @@ bool IRGenerator::typeContainsPrivateFields(const Type& type) {
 
 const Type* IRGenerator::convertType(const ASTNode& type, bool allowVoid) {
     ASTNode::TypeData td = type.getTypeData();
-    const Symbol* result = (*fSymbolTable)[td.fName];
-    if (result && result->is<Type>()) {
-        if (td.fIsNullable) {
-            if (result->as<Type>() == *fContext.fFragmentProcessor_Type) {
-                if (type.begin() != type.end()) {
-                    fErrors.error(type.fOffset, "type '" + td.fName + "' may not be used in "
-                                                "an array");
-                }
-                result = fSymbolTable->takeOwnershipOfSymbol(std::make_unique<Type>(
-                        String(result->name()) + "?", Type::TypeKind::kNullable,
-                               result->as<Type>()));
-            } else {
-                fErrors.error(type.fOffset, "type '" + td.fName + "' may not be nullable");
-            }
-        }
-        if (result->as<Type>() == *fContext.fVoid_Type) {
-            if (!allowVoid) {
-                fErrors.error(type.fOffset, "type '" + td.fName + "' not allowed in this context");
-                return nullptr;
-            }
-            if (type.begin() != type.end()) {
-                fErrors.error(type.fOffset, "type '" + td.fName + "' may not be used in an array");
-                return nullptr;
-            }
-        }
-        if (!fIsBuiltinCode && this->typeContainsPrivateFields(result->as<Type>())) {
-            fErrors.error(type.fOffset, "type '" + td.fName + "' is private");
-            return {};
-        }
-        for (const auto& size : type) {
-            String name(result->name());
-            name += "[";
-            if (size) {
-                name += to_string(size.getInt());
-            }
-            name += "]";
-            result = fSymbolTable->takeOwnershipOfSymbol(
-                    std::make_unique<Type>(name, Type::TypeKind::kArray, result->as<Type>(),
-                                           size ? size.getInt() : Type::kUnsizedArray));
-        }
-        return &result->as<Type>();
+    const Symbol* symbol = (*fSymbolTable)[td.fName];
+    if (!symbol || !symbol->is<Type>()) {
+        fErrors.error(type.fOffset, "unknown type '" + td.fName + "'");
+        return nullptr;
     }
-    fErrors.error(type.fOffset, "unknown type '" + td.fName + "'");
-    return nullptr;
+    const Type* result = &symbol->as<Type>();
+    const bool isArray = (type.begin() != type.end());
+    if (td.fIsNullable) {
+        if (*result == *fContext.fFragmentProcessor_Type) {
+            if (isArray) {
+                fErrors.error(type.fOffset, "type '" + td.fName + "' may not be used in "
+                                            "an array");
+            }
+            result = fSymbolTable->takeOwnershipOfSymbol(std::make_unique<Type>(
+                    String(result->name()) + "?", Type::TypeKind::kNullable, *result));
+        } else {
+            fErrors.error(type.fOffset, "type '" + td.fName + "' may not be nullable");
+        }
+    }
+    if (*result == *fContext.fVoid_Type) {
+        if (!allowVoid) {
+            fErrors.error(type.fOffset, "type '" + td.fName + "' not allowed in this context");
+            return nullptr;
+        }
+        if (isArray) {
+            fErrors.error(type.fOffset, "type '" + td.fName + "' may not be used in an array");
+            return nullptr;
+        }
+    }
+    if (!fIsBuiltinCode && this->typeContainsPrivateFields(*result)) {
+        fErrors.error(type.fOffset, "type '" + td.fName + "' is private");
+        return nullptr;
+    }
+    if (isArray && result->isOpaque()) {
+        fErrors.error(type.fOffset,
+                      "opaque type '" + td.fName + "' may not be used in an array");
+        return nullptr;
+    }
+    if (isArray) {
+        auto iter = type.begin();
+        int arraySize = *iter ? iter->getInt() : Type::kUnsizedArray;
+        result = fSymbolTable->addArrayDimension(result, arraySize);
+    }
+    return result;
 }
 
 std::unique_ptr<Expression> IRGenerator::convertExpression(const ASTNode& expr) {
@@ -1486,7 +1477,7 @@ std::unique_ptr<Expression> IRGenerator::coerce(std::unique_ptr<Expression> expr
                                      expr->type().displayName() + "'");
         return nullptr;
     }
-    if (type.typeKind() == Type::TypeKind::kScalar) {
+    if (type.isScalar()) {
         ExpressionArray args;
         args.push_back(std::move(expr));
         std::unique_ptr<Expression> ctor;
@@ -1515,13 +1506,81 @@ std::unique_ptr<Expression> IRGenerator::coerce(std::unique_ptr<Expression> expr
     return std::make_unique<Constructor>(/*offset=*/-1, &type, std::move(args));
 }
 
-static bool is_matrix_multiply(const Type& left, const Type& right) {
-    if (left.typeKind() == Type::TypeKind::kMatrix) {
-        return right.typeKind() == Type::TypeKind::kMatrix ||
-               right.typeKind() == Type::TypeKind::kVector;
+static bool is_matrix_multiply(const Type& left, Token::Kind op, const Type& right) {
+    if (op != Token::Kind::TK_STAR && op != Token::Kind::TK_STAREQ) {
+        return false;
     }
-    return left.typeKind() == Type::TypeKind::kVector &&
-           right.typeKind() == Type::TypeKind::kMatrix;
+    if (left.isMatrix()) {
+        return right.isMatrix() || right.isVector();
+    }
+    return left.isVector() && right.isMatrix();
+}
+
+/**
+ * Defines the set of logical (comparison) operators.
+ */
+static bool op_is_logical(Token::Kind op) {
+    switch (op) {
+        case Token::Kind::TK_LT:
+        case Token::Kind::TK_GT:
+        case Token::Kind::TK_LTEQ:
+        case Token::Kind::TK_GTEQ:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/**
+ * Defines the set of operators which perform bitwise math.
+ */
+static bool op_is_bitwise(Token::Kind op) {
+    switch (op) {
+        case Token::Kind::TK_SHL:
+        case Token::Kind::TK_SHR:
+        case Token::Kind::TK_BITWISEAND:
+        case Token::Kind::TK_BITWISEOR:
+        case Token::Kind::TK_BITWISEXOR:
+        case Token::Kind::TK_SHLEQ:
+        case Token::Kind::TK_SHREQ:
+        case Token::Kind::TK_BITWISEANDEQ:
+        case Token::Kind::TK_BITWISEOREQ:
+        case Token::Kind::TK_BITWISEXOREQ:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/**
+ * Defines the set of operators which perform vector/matrix math.
+ */
+static bool op_valid_for_matrix_or_vector(Token::Kind op) {
+    switch (op) {
+        case Token::Kind::TK_PLUS:
+        case Token::Kind::TK_MINUS:
+        case Token::Kind::TK_STAR:
+        case Token::Kind::TK_SLASH:
+        case Token::Kind::TK_PERCENT:
+        case Token::Kind::TK_SHL:
+        case Token::Kind::TK_SHR:
+        case Token::Kind::TK_BITWISEAND:
+        case Token::Kind::TK_BITWISEOR:
+        case Token::Kind::TK_BITWISEXOR:
+        case Token::Kind::TK_PLUSEQ:
+        case Token::Kind::TK_MINUSEQ:
+        case Token::Kind::TK_STAREQ:
+        case Token::Kind::TK_SLASHEQ:
+        case Token::Kind::TK_PERCENTEQ:
+        case Token::Kind::TK_SHLEQ:
+        case Token::Kind::TK_SHREQ:
+        case Token::Kind::TK_BITWISEANDEQ:
+        case Token::Kind::TK_BITWISEOREQ:
+        case Token::Kind::TK_BITWISEXOREQ:
+            return true;
+        default:
+            return false;
+    }
 }
 
 /**
@@ -1536,19 +1595,15 @@ static bool determine_binary_type(const Context& context,
                                   const Type** outLeftType,
                                   const Type** outRightType,
                                   const Type** outResultType) {
-    bool isLogical = false;
-    bool isBitwise = false;
-    bool validMatrixOrVectorOp = false;
-    bool isAssignment = Compiler::IsAssignment(op);
-
     switch (op) {
-        case Token::Kind::TK_EQ:
+        case Token::Kind::TK_EQ:  // left = right
             *outLeftType = &left;
             *outRightType = &left;
             *outResultType = &left;
             return right.canCoerceTo(left, allowNarrowing);
-        case Token::Kind::TK_EQEQ: // fall through
-        case Token::Kind::TK_NEQ: {
+
+        case Token::Kind::TK_EQEQ:   // left == right
+        case Token::Kind::TK_NEQ: {  // left != right
             CoercionCost rightToLeft = right.coercionCost(left),
                          leftToRight = left.coercionCost(right);
             if (rightToLeft < leftToRight) {
@@ -1568,126 +1623,88 @@ static bool determine_binary_type(const Context& context,
             }
             return false;
         }
-        case Token::Kind::TK_LT:   // fall through
-        case Token::Kind::TK_GT:   // fall through
-        case Token::Kind::TK_LTEQ: // fall through
-        case Token::Kind::TK_GTEQ:
-            isLogical = true;
-            break;
-        case Token::Kind::TK_LOGICALOR: // fall through
-        case Token::Kind::TK_LOGICALAND: // fall through
-        case Token::Kind::TK_LOGICALXOR: // fall through
-        case Token::Kind::TK_LOGICALOREQ: // fall through
-        case Token::Kind::TK_LOGICALANDEQ: // fall through
-        case Token::Kind::TK_LOGICALXOREQ:
+        case Token::Kind::TK_LOGICALOR:   // left || right
+        case Token::Kind::TK_LOGICALAND:  // left && right
+        case Token::Kind::TK_LOGICALXOR:  // left ^^ right
             *outLeftType = context.fBool_Type.get();
             *outRightType = context.fBool_Type.get();
             *outResultType = context.fBool_Type.get();
             return left.canCoerceTo(*context.fBool_Type, allowNarrowing) &&
                    right.canCoerceTo(*context.fBool_Type, allowNarrowing);
-        case Token::Kind::TK_STAREQ: // fall through
-        case Token::Kind::TK_STAR:
-            if (is_matrix_multiply(left, right)) {
-                // determine final component type
-                if (determine_binary_type(context, allowNarrowing, op,
-                                          left.componentType(), right.componentType(),
-                                          outLeftType, outRightType, outResultType)) {
-                    *outLeftType = &(*outResultType)->toCompound(context, left.columns(),
-                                                                 left.rows());
-                    *outRightType = &(*outResultType)->toCompound(context, right.columns(),
-                                                                  right.rows());
-                    int leftColumns = left.columns();
-                    int leftRows = left.rows();
-                    int rightColumns;
-                    int rightRows;
-                    if (right.typeKind() == Type::TypeKind::kVector) {
-                        // matrix * vector treats the vector as a column vector, so we need to
-                        // transpose it
-                        rightColumns = right.rows();
-                        rightRows = right.columns();
-                        SkASSERT(rightColumns == 1);
-                    } else {
-                        rightColumns = right.columns();
-                        rightRows = right.rows();
-                    }
-                    if (rightColumns > 1) {
-                        *outResultType = &(*outResultType)->toCompound(context, rightColumns,
-                                                                       leftRows);
-                    } else {
-                        // result was a column vector, transpose it back to a row
-                        *outResultType = &(*outResultType)->toCompound(context, leftRows,
-                                                                       rightColumns);
-                    }
-                    if (isAssignment && ((*outResultType)->columns() != leftColumns ||
-                                         (*outResultType)->rows() != leftRows)) {
-                        return false;
-                    }
-                    return leftColumns == rightRows;
-                } else {
-                    return false;
-                }
-            }
-            validMatrixOrVectorOp = true;
-            break;
-        case Token::Kind::TK_SHLEQ:
-        case Token::Kind::TK_SHREQ:
-        case Token::Kind::TK_BITWISEANDEQ:
-        case Token::Kind::TK_BITWISEOREQ:
-        case Token::Kind::TK_BITWISEXOREQ:
-        case Token::Kind::TK_SHL:
-        case Token::Kind::TK_SHR:
-        case Token::Kind::TK_BITWISEAND:
-        case Token::Kind::TK_BITWISEOR:
-        case Token::Kind::TK_BITWISEXOR:
-            isBitwise = true;
-            validMatrixOrVectorOp = true;
-            break;
-        case Token::Kind::TK_PLUSEQ:
-        case Token::Kind::TK_MINUSEQ:
-        case Token::Kind::TK_SLASHEQ:
-        case Token::Kind::TK_PERCENTEQ:
-        case Token::Kind::TK_PLUS:
-        case Token::Kind::TK_MINUS:
-        case Token::Kind::TK_SLASH:
-        case Token::Kind::TK_PERCENT:
-            validMatrixOrVectorOp = true;
-            break;
-        case Token::Kind::TK_COMMA:
+
+        case Token::Kind::TK_COMMA:  // left, right
             *outLeftType = &left;
             *outRightType = &right;
             *outResultType = &right;
             return true;
+
         default:
             break;
     }
 
-    bool leftIsVectorOrMatrix  = left.typeKind()  == Type::TypeKind::kVector ||
-                                 left.typeKind()  == Type::TypeKind::kMatrix,
-         rightIsVectorOrMatrix = right.typeKind() == Type::TypeKind::kVector ||
-                                 right.typeKind() == Type::TypeKind::kMatrix;
+    // Boolean types only support the operators listed above (, = == != || && ^^).
+    // If we've gotten this far with a boolean, we have an unsupported operator.
+    const Type& leftComponentType(left.columns() > 1 ? left.componentType() : left);
+    const Type& rightComponentType(right.columns() > 1 ? right.componentType() : right);
+    if (leftComponentType.isBoolean() || rightComponentType.isBoolean()) {
+        return false;
+    }
 
-    if (leftIsVectorOrMatrix && validMatrixOrVectorOp &&
-        right.typeKind() == Type::TypeKind::kScalar) {
+    bool isAssignment = Compiler::IsAssignment(op);
+    if (is_matrix_multiply(left, op, right)) {  // left * right
+        // Determine final component type.
+        if (!determine_binary_type(context, allowNarrowing, op,
+                                   left.componentType(), right.componentType(),
+                                   outLeftType, outRightType, outResultType)) {
+            return false;
+        }
+        *outLeftType = &(*outResultType)->toCompound(context, left.columns(), left.rows());
+        *outRightType = &(*outResultType)->toCompound(context, right.columns(), right.rows());
+        int leftColumns = left.columns(), leftRows = left.rows();
+        int rightColumns = right.columns(), rightRows = right.rows();
+        if (right.isVector()) {
+            // `matrix * vector` treats the vector as a column vector; we need to transpose it.
+            std::swap(rightColumns, rightRows);
+            SkASSERT(rightColumns == 1);
+        }
+        if (rightColumns > 1) {
+            *outResultType = &(*outResultType)->toCompound(context, rightColumns, leftRows);
+        } else {
+            // The result was a column vector. Transpose it back to a row.
+            *outResultType = &(*outResultType)->toCompound(context, leftRows, rightColumns);
+        }
+        if (isAssignment && ((*outResultType)->columns() != leftColumns ||
+                             (*outResultType)->rows() != leftRows)) {
+            return false;
+        }
+        return leftColumns == rightRows;
+    }
+
+    bool leftIsVectorOrMatrix = left.isVector() || left.isMatrix();
+    bool validMatrixOrVectorOp = op_valid_for_matrix_or_vector(op);
+
+    if (leftIsVectorOrMatrix && validMatrixOrVectorOp && right.isScalar()) {
         if (determine_binary_type(context, allowNarrowing, op, left.componentType(), right,
                                   outLeftType, outRightType, outResultType)) {
             *outLeftType = &(*outLeftType)->toCompound(context, left.columns(), left.rows());
-            if (!isLogical) {
-                *outResultType =
-                        &(*outResultType)->toCompound(context, left.columns(), left.rows());
+            if (!op_is_logical(op)) {
+                *outResultType = &(*outResultType)->toCompound(context, left.columns(),
+                                                               left.rows());
             }
             return true;
         }
         return false;
     }
 
-    if (!isAssignment && rightIsVectorOrMatrix && validMatrixOrVectorOp &&
-        left.typeKind() == Type::TypeKind::kScalar) {
+    bool rightIsVectorOrMatrix = right.isVector() || right.isMatrix();
+
+    if (!isAssignment && rightIsVectorOrMatrix && validMatrixOrVectorOp && left.isScalar()) {
         if (determine_binary_type(context, allowNarrowing, op, left, right.componentType(),
                                   outLeftType, outRightType, outResultType)) {
             *outRightType = &(*outRightType)->toCompound(context, right.columns(), right.rows());
-            if (!isLogical) {
-                *outResultType =
-                        &(*outResultType)->toCompound(context, right.columns(), right.rows());
+            if (!op_is_logical(op)) {
+                *outResultType = &(*outResultType)->toCompound(context, right.columns(),
+                                                               right.rows());
             }
             return true;
         }
@@ -1698,13 +1715,9 @@ static bool determine_binary_type(const Context& context,
     CoercionCost leftToRightCost = isAssignment ? CoercionCost::Impossible()
                                                 : left.coercionCost(right);
 
-    if ((left.typeKind() == Type::TypeKind::kScalar &&
-         right.typeKind() == Type::TypeKind::kScalar) ||
-        (leftIsVectorOrMatrix && validMatrixOrVectorOp)) {
-        if (isBitwise) {
-            const Type& leftNumberType(leftIsVectorOrMatrix ? left.componentType() : left);
-            const Type& rightNumberType(rightIsVectorOrMatrix ? right.componentType() : right);
-            if (!leftNumberType.isInteger() || !rightNumberType.isInteger()) {
+    if ((left.isScalar() && right.isScalar()) || (leftIsVectorOrMatrix && validMatrixOrVectorOp)) {
+        if (op_is_bitwise(op)) {
+            if (!leftComponentType.isInteger() || !rightComponentType.isInteger()) {
                 return false;
             }
         }
@@ -1721,7 +1734,7 @@ static bool determine_binary_type(const Context& context,
         } else {
             return false;
         }
-        if (isLogical) {
+        if (op_is_logical(op)) {
             *outResultType = context.fBool_Type.get();
         }
         return true;
@@ -1920,16 +1933,14 @@ std::unique_ptr<Expression> IRGenerator::constantFold(const Expression& left,
     }
     const Type& leftType = left.type();
     const Type& rightType = right.type();
-    if (leftType.typeKind() == Type::TypeKind::kVector && leftType == rightType) {
+    if (leftType.isVector() && leftType == rightType) {
         if (leftType.componentType().isFloat()) {
             return constantFoldVector<SKSL_FLOAT>(left, op, right);
         } else if (leftType.componentType().isInteger()) {
             return constantFoldVector<SKSL_INT>(left, op, right);
         }
     }
-    if (leftType.typeKind() == Type::TypeKind::kMatrix &&
-        rightType.typeKind() == Type::TypeKind::kMatrix &&
-        left.kind() == right.kind()) {
+    if (leftType.isMatrix() && rightType.isMatrix() && left.kind() == right.kind()) {
         switch (op) {
             case Token::Kind::TK_EQEQ:
                 return std::make_unique<BoolLiteral>(fContext, left.fOffset,
@@ -1953,14 +1964,7 @@ std::unique_ptr<Expression> IRGenerator::convertBinaryExpression(const ASTNode& 
         return nullptr;
     }
     Token::Kind op = expression.getToken().fKind;
-    std::unique_ptr<Expression> right;
-    {
-        // Can't inline the right side of a short-circuiting boolean, because our inlining
-        // approach runs things out of order.
-        AutoDisableInline disableInline(this, /*canInline=*/(op != Token::Kind::TK_LOGICALAND &&
-                                                             op != Token::Kind::TK_LOGICALOR));
-        right = this->convertExpression(*(iter++));
-    }
+    std::unique_ptr<Expression> right = this->convertExpression(*(iter++));
     if (!right) {
         return nullptr;
     }
@@ -2015,18 +2019,13 @@ std::unique_ptr<Expression> IRGenerator::convertTernaryExpression(const ASTNode&
     if (!test) {
         return nullptr;
     }
-    std::unique_ptr<Expression> ifTrue;
-    std::unique_ptr<Expression> ifFalse;
-    {
-        AutoDisableInline disableInline(this);
-        ifTrue = this->convertExpression(*(iter++));
-        if (!ifTrue) {
-            return nullptr;
-        }
-        ifFalse = this->convertExpression(*(iter++));
-        if (!ifFalse) {
-            return nullptr;
-        }
+    std::unique_ptr<Expression> ifTrue = this->convertExpression(*(iter++));
+    if (!ifTrue) {
+        return nullptr;
+    }
+    std::unique_ptr<Expression> ifFalse = this->convertExpression(*(iter++));
+    if (!ifFalse) {
+        return nullptr;
     }
     const Type* trueType;
     const Type* falseType;
@@ -2092,7 +2091,7 @@ void IRGenerator::copyIntrinsicIfNeeded(const FunctionDeclaration& function) {
             this->copyIntrinsicIfNeeded(*f);
         }
 
-        fProgramElements->push_back(original.clone());
+        fSharedElements->push_back(found);
     }
 }
 
@@ -2152,20 +2151,7 @@ std::unique_ptr<Expression> IRGenerator::call(int offset,
         }
     }
 
-    auto funcCall = std::make_unique<FunctionCall>(offset, returnType, &function,
-                                                   std::move(arguments));
-    if (fCanInline &&
-        fInliner->isSafeToInline(funcCall->function().definition()) &&
-        !fInliner->isLargeFunction(funcCall->function().definition())) {
-        Inliner::InlinedCall inlinedCall = fInliner->inlineCall(funcCall.get(), fSymbolTable.get(),
-                                                                fCurrentFunction);
-        if (inlinedCall.fInlinedBody) {
-            fExtraStatements.push_back(std::move(inlinedCall.fInlinedBody));
-        }
-        return std::move(inlinedCall.fReplacementExpr);
-    }
-
-    return std::move(funcCall);
+    return std::make_unique<FunctionCall>(offset, returnType, &function, std::move(arguments));
 }
 
 /**
@@ -2313,10 +2299,8 @@ static int component_count(const Type& type) {
 std::unique_ptr<Expression> IRGenerator::convertCompoundConstructor(int offset,
                                                                     const Type& type,
                                                                     ExpressionArray args) {
-    SkASSERT(type.typeKind() == Type::TypeKind::kVector ||
-             type.typeKind() == Type::TypeKind::kMatrix);
-    if (type.typeKind() == Type::TypeKind::kMatrix && args.size() == 1 &&
-        args[0]->type().typeKind() == Type::TypeKind::kMatrix) {
+    SkASSERT(type.isVector() || type.isMatrix());
+    if (type.isMatrix() && args.size() == 1 && args[0]->type().isMatrix()) {
         // matrix from matrix is always legal
         return std::unique_ptr<Expression>(new Constructor(offset, &type, std::move(args)));
     }
@@ -2326,7 +2310,7 @@ std::unique_ptr<Expression> IRGenerator::convertCompoundConstructor(int offset,
         type.componentType().isNumber() != args[0]->type().componentType().isNumber()) {
         for (size_t i = 0; i < args.size(); i++) {
             const Type& argType = args[i]->type();
-            if (argType.typeKind() == Type::TypeKind::kVector) {
+            if (argType.isVector()) {
                 if (type.componentType().isNumber() !=
                     argType.componentType().isNumber()) {
                     fErrors.error(offset, "'" + argType.displayName() + "' is not a valid "
@@ -2335,9 +2319,9 @@ std::unique_ptr<Expression> IRGenerator::convertCompoundConstructor(int offset,
                     return nullptr;
                 }
                 actual += argType.columns();
-            } else if (argType.typeKind() == Type::TypeKind::kScalar) {
+            } else if (argType.isScalar()) {
                 actual += 1;
-                if (type.typeKind() != Type::TypeKind::kScalar) {
+                if (!type.isScalar()) {
                     args[i] = this->coerce(std::move(args[i]), type.componentType());
                     if (!args[i]) {
                         return nullptr;
@@ -2368,10 +2352,9 @@ std::unique_ptr<Expression> IRGenerator::convertConstructor(int offset,
         // argument is already the right type, just return it
         return std::move(args[0]);
     }
-    Type::TypeKind kind = type.typeKind();
     if (type.isNumber()) {
         return this->convertNumberConstructor(offset, type, std::move(args));
-    } else if (kind == Type::TypeKind::kArray) {
+    } else if (type.isArray()) {
         const Type& base = type.componentType();
         for (size_t i = 0; i < args.size(); i++) {
             args[i] = this->coerce(std::move(args[i]), base);
@@ -2380,7 +2363,7 @@ std::unique_ptr<Expression> IRGenerator::convertConstructor(int offset,
             }
         }
         return std::make_unique<Constructor>(offset, &type, std::move(args));
-    } else if (kind == Type::TypeKind::kVector || kind == Type::TypeKind::kMatrix) {
+    } else if (type.isVector() || type.isMatrix()) {
         return this->convertCompoundConstructor(offset, type, std::move(args));
     } else {
         fErrors.error(offset, "cannot construct '" + type.displayName() + "'");
@@ -2397,7 +2380,7 @@ std::unique_ptr<Expression> IRGenerator::convertPrefixExpression(const ASTNode& 
     const Type& baseType = base->type();
     switch (expression.getToken().fKind) {
         case Token::Kind::TK_PLUS:
-            if (!baseType.isNumber() && baseType.typeKind() != Type::TypeKind::kVector &&
+            if (!baseType.isNumber() && !baseType.isVector() &&
                 baseType != *fContext.fFloatLiteral_Type) {
                 fErrors.error(expression.fOffset,
                               "'+' cannot operate on '" + baseType.displayName() + "'");
@@ -2414,7 +2397,8 @@ std::unique_ptr<Expression> IRGenerator::convertPrefixExpression(const ASTNode& 
                 return std::make_unique<FloatLiteral>(fContext, base->fOffset,
                                                       -base->as<FloatLiteral>().value());
             }
-            if (!baseType.isNumber() && baseType.typeKind() != Type::TypeKind::kVector) {
+            if (!baseType.isNumber() &&
+                !(baseType.isVector() && baseType.componentType().isNumber())) {
                 fErrors.error(expression.fOffset,
                               "'-' cannot operate on '" + baseType.displayName() + "'");
                 return nullptr;
@@ -2444,7 +2428,7 @@ std::unique_ptr<Expression> IRGenerator::convertPrefixExpression(const ASTNode& 
             }
             break;
         case Token::Kind::TK_LOGICALNOT:
-            if (baseType != *fContext.fBool_Type) {
+            if (!baseType.isBoolean()) {
                 fErrors.error(expression.fOffset,
                               String("'") + Compiler::OperatorName(expression.getToken().fKind) +
                               "' cannot operate on '" + baseType.displayName() + "'");
@@ -2471,14 +2455,11 @@ std::unique_ptr<Expression> IRGenerator::convertPrefixExpression(const ASTNode& 
 
 std::unique_ptr<Expression> IRGenerator::convertIndex(std::unique_ptr<Expression> base,
                                                       const ASTNode& index) {
-    if (base->kind() == Expression::Kind::kTypeReference) {
+    if (base->is<TypeReference>()) {
         if (index.fKind == ASTNode::Kind::kInt) {
-            const Type& oldType = base->as<TypeReference>().value();
-            SKSL_INT size = index.getInt();
-            const Type* newType = fSymbolTable->takeOwnershipOfSymbol(
-                    std::make_unique<Type>(oldType.name() + "[" + to_string(size) + "]",
-                                           Type::TypeKind::kArray, oldType, size));
-            return std::make_unique<TypeReference>(fContext, base->fOffset, newType);
+            const Type* type = &base->as<TypeReference>().value();
+            type = fSymbolTable->addArrayDimension(type, index.getInt());
+            return std::make_unique<TypeReference>(fContext, base->fOffset, type);
 
         } else {
             fErrors.error(base->fOffset, "array size must be a constant");
@@ -2486,9 +2467,7 @@ std::unique_ptr<Expression> IRGenerator::convertIndex(std::unique_ptr<Expression
         }
     }
     const Type& baseType = base->type();
-    if (baseType.typeKind() != Type::TypeKind::kArray &&
-        baseType.typeKind() != Type::TypeKind::kMatrix &&
-        baseType.typeKind() != Type::TypeKind::kVector) {
+    if (!baseType.isArray() && !baseType.isMatrix() && !baseType.isVector()) {
         fErrors.error(base->fOffset, "expected array, but found '" + baseType.displayName() +
                                      "'");
         return nullptr;
@@ -2539,7 +2518,7 @@ std::unique_ptr<Expression> IRGenerator::convertSwizzle(std::unique_ptr<Expressi
                                                         StringFragment fields) {
     const int offset = base->fOffset;
     const Type& baseType = base->type();
-    if (baseType.typeKind() != Type::TypeKind::kVector && !baseType.isNumber()) {
+    if (!baseType.isVector() && !baseType.isNumber()) {
         fErrors.error(offset, "cannot swizzle value of type '" + baseType.displayName() + "'");
         return nullptr;
     }
@@ -2770,11 +2749,11 @@ std::unique_ptr<Expression> IRGenerator::convertIndexExpression(const ASTNode& i
     }
     if (iter != index.end()) {
         return this->convertIndex(std::move(base), *(iter++));
-    } else if (base->kind() == Expression::Kind::kTypeReference) {
-        const Type& oldType = base->as<TypeReference>().value();
-        const Type* newType = fSymbolTable->takeOwnershipOfSymbol(std::make_unique<Type>(
-                oldType.name() + "[]", Type::TypeKind::kArray, oldType, Type::kUnsizedArray));
-        return std::make_unique<TypeReference>(fContext, base->fOffset, newType);
+    }
+    if (base->is<TypeReference>()) {
+        const Type* type = &base->as<TypeReference>().value();
+        type = fSymbolTable->addArrayDimension(type, Type::kUnsizedArray);
+        return std::make_unique<TypeReference>(fContext, base->fOffset, type);
     }
     fErrors.error(index.fOffset, "'[]' must follow a type name");
     return nullptr;
@@ -2881,86 +2860,37 @@ bool IRGenerator::setRefKind(Expression& expr, VariableReference::RefKind kind) 
     return true;
 }
 
-void IRGenerator::cloneBuiltinVariables() {
-    class BuiltinVariableRemapper : public ProgramWriter {
+void IRGenerator::findAndDeclareBuiltinVariables() {
+    class BuiltinVariableScanner : public ProgramVisitor {
     public:
-        BuiltinVariableRemapper(IRGenerator* generator) : fGenerator(generator) {}
+        BuiltinVariableScanner(IRGenerator* generator) : fGenerator(generator) {}
 
-        void cloneVariable(const String& name) {
+        void addDeclaringElement(const String& name) {
             // If this is the *first* time we've seen this builtin, findAndInclude will return
             // the corresponding ProgramElement.
-            if (const ProgramElement* sharedDecl = fGenerator->fIntrinsics->findAndInclude(name)) {
-                SkASSERT(sharedDecl->is<GlobalVarDeclaration>() ||
-                         sharedDecl->is<InterfaceBlock>());
-
-                // Clone the ProgramElement that declares this variable
-                std::unique_ptr<ProgramElement> clonedDecl = sharedDecl->clone();
-                const Variable* sharedVar = nullptr;
-                const Expression* initialValue = nullptr;
-
-                if (clonedDecl->is<GlobalVarDeclaration>()) {
-                    GlobalVarDeclaration& global = clonedDecl->as<GlobalVarDeclaration>();
-                    VarDeclaration& decl = global.declaration()->as<VarDeclaration>();
-                    sharedVar = &decl.var();
-                    initialValue = decl.value().get();
-                } else {
-                    SkASSERT(clonedDecl->is<InterfaceBlock>());
-                    sharedVar = &clonedDecl->as<InterfaceBlock>().variable();
-                }
-
-                // Now clone the Variable, and add the clone to the Program's symbol table.
-                // Any initial value expression was cloned as part of the GlobalVarDeclaration,
-                // so we're pointing at a Program-owned expression.
-                const Variable* clonedVar =
-                        fGenerator->fSymbolTable->takeOwnershipOfSymbol(std::make_unique<Variable>(
-                                sharedVar->fOffset, &sharedVar->modifiers(), sharedVar->name(),
-                                &sharedVar->type(), /*builtin=*/false, sharedVar->storage(),
-                                initialValue));
-
-                // Go back and update the declaring element to point at the cloned Variable.
-                if (clonedDecl->is<GlobalVarDeclaration>()) {
-                    GlobalVarDeclaration& global = clonedDecl->as<GlobalVarDeclaration>();
-                    global.declaration()->as<VarDeclaration>().setVar(clonedVar);
-                } else {
-                    clonedDecl->as<InterfaceBlock>().setVariable(clonedVar);
-                }
-
-                // Remember this new re-mapping...
-                fRemap.insert({sharedVar, clonedVar});
-
-                // Add the declaring element to this Program
-                fNewElements.push_back(std::move(clonedDecl));
+            if (const ProgramElement* decl = fGenerator->fIntrinsics->findAndInclude(name)) {
+                SkASSERT(decl->is<GlobalVarDeclaration>() || decl->is<InterfaceBlock>());
+                fNewElements.push_back(decl);
             }
         }
 
-        bool visitExpression(Expression& e) override {
-            // Look for references to builtin variables.
+        bool visitExpression(const Expression& e) override {
             if (e.is<VariableReference>() && e.as<VariableReference>().variable()->isBuiltin()) {
-                const Variable* sharedVar = e.as<VariableReference>().variable();
-
-                this->cloneVariable(sharedVar->name());
-
-                // TODO: SkASSERT(found), once all pre-includes are converted?
-                auto found = fRemap.find(sharedVar);
-                if (found != fRemap.end()) {
-                    e.as<VariableReference>().setVariable(found->second);
-                }
+                this->addDeclaringElement(e.as<VariableReference>().variable()->name());
             }
-
             return INHERITED::visitExpression(e);
         }
 
         IRGenerator* fGenerator;
-        std::unordered_map<const Variable*, const Variable*> fRemap;
-        std::vector<std::unique_ptr<ProgramElement>> fNewElements;
+        std::vector<const ProgramElement*> fNewElements;
 
-        using INHERITED = ProgramWriter;
+        using INHERITED = ProgramVisitor;
         using INHERITED::visitProgramElement;
     };
 
-    BuiltinVariableRemapper remapper(this);
+    BuiltinVariableScanner scanner(this);
     for (auto& e : *fProgramElements) {
-        remapper.visitProgramElement(*e);
+        scanner.visitProgramElement(*e);
     }
 
     // Vulkan requires certain builtin variables be present, even if they're unused. At one time,
@@ -2968,21 +2898,19 @@ void IRGenerator::cloneBuiltinVariables() {
     // that drop or corrupt draws if they're missing.
     switch (fKind) {
         case Program::kFragment_Kind:
-            remapper.cloneVariable("sk_Clockwise");
+            scanner.addDeclaringElement("sk_Clockwise");
             break;
         default:
             break;
     }
 
-    fProgramElements->insert(fProgramElements->begin(),
-                             std::make_move_iterator(remapper.fNewElements.begin()),
-                             std::make_move_iterator(remapper.fNewElements.end()));
+    fSharedElements->insert(
+            fSharedElements->begin(), scanner.fNewElements.begin(), scanner.fNewElements.end());
 }
 
 IRGenerator::IRBundle IRGenerator::convertProgram(
         Program::Kind kind,
         const Program::Settings* settings,
-        const ShaderCapsClass* caps,
         const ParsedModule& base,
         bool isBuiltinCode,
         const char* text,
@@ -2990,7 +2918,6 @@ IRGenerator::IRBundle IRGenerator::convertProgram(
         const std::vector<std::unique_ptr<ExternalValue>>* externalValues) {
     fKind = kind;
     fSettings = settings;
-    fCaps = caps;
     fSymbolTable = base.fSymbols;
     fIntrinsics = base.fIntrinsics.get();
     if (fIntrinsics) {
@@ -2999,19 +2926,15 @@ IRGenerator::IRBundle IRGenerator::convertProgram(
     fIsBuiltinCode = isBuiltinCode;
 
     std::vector<std::unique_ptr<ProgramElement>> elements;
+    std::vector<const ProgramElement*> sharedElements;
+
     fProgramElements = &elements;
+    fSharedElements = &sharedElements;
 
     fInputs.reset();
     fInvocations = -1;
     fRTAdjust = nullptr;
     fRTAdjustInterfaceBlock = nullptr;
-
-    fCapsMap.clear();
-    if (fCaps) {
-        fill_caps(*fCaps, &fCapsMap);
-    } else {
-        fCapsMap.insert({String("integerSupport"), Program::Settings::Value(true)});
-    }
 
     AutoSymbolTable table(this);
 
@@ -3028,8 +2951,7 @@ IRGenerator::IRBundle IRGenerator::convertProgram(
                                               fContext.fInt_Type.get(), false,
                                               Variable::Storage::kGlobal);
         auto decl = std::make_unique<VarDeclaration>(var.get(), fContext.fInt_Type.get(),
-                                                     /*sizes=*/ExpressionArray{},
-                                                     /*value=*/nullptr);
+                                                     /*arraySize=*/0, /*value=*/nullptr);
         fSymbolTable->add(std::move(var));
         fProgramElements->push_back(
                 std::make_unique<GlobalVarDeclaration>(/*offset=*/-1, std::move(decl)));
@@ -3050,23 +2972,18 @@ IRGenerator::IRBundle IRGenerator::convertProgram(
     SkASSERT(fFile);
     for (const auto& decl : fFile->root()) {
         switch (decl.fKind) {
-            case ASTNode::Kind::kVarDeclarations: {
-                StatementArray decls = this->convertVarDeclarations(decl,
-                                                                    Variable::Storage::kGlobal);
-                for (auto& varDecl : decls) {
-                    fProgramElements->push_back(std::make_unique<GlobalVarDeclaration>(
-                            decl.fOffset, std::move(varDecl)));
-                }
+            case ASTNode::Kind::kVarDeclarations:
+                this->convertGlobalVarDeclarations(decl);
                 break;
-            }
-            case ASTNode::Kind::kEnum: {
+
+            case ASTNode::Kind::kEnum:
                 this->convertEnum(decl);
                 break;
-            }
-            case ASTNode::Kind::kFunction: {
+
+            case ASTNode::Kind::kFunction:
                 this->convertFunction(decl);
                 break;
-            }
+
             case ASTNode::Kind::kModifiers: {
                 std::unique_ptr<ModifiersDeclaration> f = this->convertModifiersDeclaration(decl);
                 if (f) {
@@ -3096,6 +3013,13 @@ IRGenerator::IRBundle IRGenerator::convertProgram(
                 }
                 break;
             }
+            case ASTNode::Kind::kType: {
+                std::unique_ptr<StructDefinition> s = this->convertStructDefinition(decl);
+                if (s) {
+                    fProgramElements->push_back(std::move(s));
+                }
+                break;
+            }
             default:
 #ifdef SK_DEBUG
                 ABORT("unsupported declaration: %s\n", decl.description().c_str());
@@ -3104,9 +3028,9 @@ IRGenerator::IRBundle IRGenerator::convertProgram(
         }
     }
 
-    // Any variables defined in the pre-includes need to be cloned into the Program
+    // Variables defined in the pre-includes need their declaring elements added to the program
     if (!fIsBuiltinCode && fIntrinsics) {
-        this->cloneBuiltinVariables();
+        this->findAndDeclareBuiltinVariables();
     }
 
     // Do a final pass looking for dangling FunctionReference or TypeReference expressions
@@ -3129,7 +3053,8 @@ IRGenerator::IRBundle IRGenerator::convertProgram(
 
     fSettings = nullptr;
 
-    return IRBundle{std::move(elements), this->releaseModifiers(), fSymbolTable, fInputs};
+    return IRBundle{std::move(elements), std::move(sharedElements), this->releaseModifiers(),
+                    fSymbolTable, fInputs};
 }
 
 }  // namespace SkSL

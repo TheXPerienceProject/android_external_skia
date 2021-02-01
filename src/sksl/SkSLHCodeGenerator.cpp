@@ -33,7 +33,7 @@ HCodeGenerator::HCodeGenerator(const Context* context, const Program* program,
 
 String HCodeGenerator::ParameterType(const Context& context, const Type& type,
                                      const Layout& layout) {
-    if (type.typeKind() == Type::TypeKind::kArray) {
+    if (type.isArray()) {
         return String::printf("std::array<%s>", ParameterType(context, type.componentType(),
                                                               layout).c_str());
     }
@@ -46,7 +46,7 @@ String HCodeGenerator::ParameterType(const Context& context, const Type& type,
 
 Layout::CType HCodeGenerator::ParameterCType(const Context& context, const Type& type,
                                      const Layout& layout) {
-    SkASSERT(type.typeKind() != Type::TypeKind::kArray);
+    SkASSERT(!type.isArray());
     if (layout.fCType != Layout::CType::kDefault) {
         return layout.fCType;
     }
@@ -355,7 +355,7 @@ bool HCodeGenerator::generateCode() {
                  "class %s : public GrFragmentProcessor {\n"
                  "public:\n",
                  fFullName.c_str());
-    for (const auto& p : fProgram.elements()) {
+    for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<Enum>() && !p->as<Enum>().isSharedWithCpp()) {
             this->writef("%s\n", p->as<Enum>().code().c_str());
         }

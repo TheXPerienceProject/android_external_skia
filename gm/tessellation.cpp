@@ -17,7 +17,6 @@
 #include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
-#include "src/gpu/GrRenderTargetContextPriv.h"
 #include "src/gpu/GrShaderCaps.h"
 #include "src/gpu/GrShaderVar.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -311,10 +310,11 @@ private:
     }
 
     void onPrePrepare(GrRecordingContext*,
-                      const GrSurfaceProxyView* writeView,
+                      const GrSurfaceProxyView& writeView,
                       GrAppliedClip*,
                       const GrXferProcessor::DstProxyView&,
-                      GrXferBarrierFlags renderPassXferBarriers) override {}
+                      GrXferBarrierFlags renderPassXferBarriers,
+                      GrLoadOp colorLoadOp) override {}
 
     void onPrepare(GrOpFlushState* flushState) override {
         if (fTriPositions) {
@@ -327,7 +327,7 @@ private:
 
     void onExecute(GrOpFlushState* state, const SkRect& chainBounds) override {
         GrPipeline pipeline(GrScissorTest::kDisabled, SkBlendMode::kSrc,
-                            state->drawOpArgs().writeSwizzle());
+                            state->drawOpArgs().writeView().swizzle());
         int tessellationPatchVertexCount;
         std::unique_ptr<GrGeometryProcessor> shader;
         if (fTriPositions) {
@@ -343,11 +343,10 @@ private:
             shader = std::make_unique<TessellationTestRectShader>(fViewMatrix);
         }
 
-        GrProgramInfo programInfo(state->proxy()->numSamples(), state->proxy()->numStencilSamples(),
-                                  state->proxy()->backendFormat(), state->writeView()->origin(),
-                                  &pipeline, &GrUserStencilSettings::kUnused, shader.get(),
-                                  GrPrimitiveType::kPatches, tessellationPatchVertexCount,
-                                  state->renderPassBarriers());
+        GrProgramInfo programInfo(state->writeView(), &pipeline, &GrUserStencilSettings::kUnused,
+                                  shader.get(), GrPrimitiveType::kPatches,
+                                  tessellationPatchVertexCount, state->renderPassBarriers(),
+                                  state->colorLoadOp());
 
         state->bindPipeline(programInfo, SkRect::MakeIWH(kWidth, kHeight));
         state->bindBuffers(nullptr, nullptr, std::move(fVertexBuffer));
@@ -402,12 +401,9 @@ DrawResult TessellationGM::onDraw(GrRecordingContext* ctx, GrRenderTargetContext
     borderPaint.setColor4f({1,0,1,1});
     canvas->drawRect(kRect.makeOutset(1.5f, 1.5f), borderPaint);
 
-    rtc->priv().testingOnly_addDrawOp(
-            GrOp::Make<TessellationTestOp>(ctx, canvas->getTotalMatrix(), kTri1));
-    rtc->priv().testingOnly_addDrawOp(
-            GrOp::Make<TessellationTestOp>(ctx, canvas->getTotalMatrix(), kTri2));
-    rtc->priv().testingOnly_addDrawOp(
-            GrOp::Make<TessellationTestOp>(ctx, canvas->getTotalMatrix(), nullptr));
+    rtc->addDrawOp(GrOp::Make<TessellationTestOp>(ctx, canvas->getTotalMatrix(), kTri1));
+    rtc->addDrawOp(GrOp::Make<TessellationTestOp>(ctx, canvas->getTotalMatrix(), kTri2));
+    rtc->addDrawOp(GrOp::Make<TessellationTestOp>(ctx, canvas->getTotalMatrix(), nullptr));
 
     return skiagm::DrawResult::kOk;
 }

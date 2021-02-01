@@ -42,30 +42,6 @@ class GrYUVABackendTextures;
 
 struct SkYUVAIndex;
 
-class SkMipmapBuilder {
-public:
-    SkMipmapBuilder(const SkImageInfo&);
-    ~SkMipmapBuilder();
-
-    int countLevels() const;
-    SkPixmap level(int index) const;
-
-    /**
-     *  If these levels are compatible with src, return a new Image that combines src's base level
-     *  with these levels as mip levels. If not compatible, this returns nullptr.
-     */
-    sk_sp<SkImage> attachTo(const SkImage* src);
-
-    sk_sp<SkImage> attachTo(sk_sp<SkImage> src) {
-        return this->attachTo(src.get());
-    }
-
-private:
-    sk_sp<SkMipmap> fMM;
-
-    friend class SkImage;
-};
-
 /** \class SkImage
     SkImage describes a two dimensional array of pixels to draw. The pixels may be
     decoded in a raster bitmap, encoded in a SkPicture or compressed data stream,
@@ -701,8 +677,12 @@ public:
         return this->makeShader(tmx, tmy, &localMatrix);
     }
 
+#ifdef SK_SUPPORT_LEGACY_SCALEPIXELS_PARAM
     sk_sp<SkShader> makeShader(SkTileMode tmx, SkTileMode tmy, const SkMatrix* localMatrix,
-                               SkFilterQuality) const;
+                               SkFilterQuality fq) const {
+        return this->makeShader(tmx, tmy, SkSamplingOptions(fq), localMatrix);
+    }
+#endif
 
     /** Creates SkShader from SkImage. SkShader dimensions are taken from SkImage. SkShader uses
         SkShader::kClamp_TileMode to fill drawn area outside SkImage. localMatrix permits
@@ -717,7 +697,6 @@ public:
     sk_sp<SkShader> makeShader(const SkMatrix& localMatrix) const {
         return this->makeShader(SkTileMode::kClamp, SkTileMode::kClamp, &localMatrix);
     }
-
 
     /** Copies SkImage pixel address, row bytes, and SkImageInfo to pixmap, if address
         is available, and returns true. If pixel address is not available, return
@@ -1004,21 +983,21 @@ public:
         match. If SkImage SkColorSpace is nullptr, dst.colorSpace() must match. Returns
         false if pixel conversion is not possible.
 
-        Scales the image, with filterQuality, to match dst.width() and dst.height().
-        filterQuality kNone_SkFilterQuality is fastest, typically implemented with
-        nearest neighbor filter. kLow_SkFilterQuality is typically implemented with
-        bilerp filter. kMedium_SkFilterQuality is typically implemented with
-        bilerp filter, and mip-map filter when size is reduced.
-        kHigh_SkFilterQuality is slowest, typically implemented with bicubic filter.
-
         If cachingHint is kAllow_CachingHint, pixels may be retained locally.
         If cachingHint is kDisallow_CachingHint, pixels are not added to the local cache.
 
         @param dst            destination SkPixmap: SkImageInfo, pixels, row bytes
         @return               true if pixels are scaled to fit dst
     */
-    bool scalePixels(const SkPixmap& dst, SkFilterQuality filterQuality,
+    bool scalePixels(const SkPixmap& dst, const SkSamplingOptions&,
                      CachingHint cachingHint = kAllow_CachingHint) const;
+
+#ifdef SK_SUPPORT_LEGACY_SCALEPIXELS_PARAM
+    bool scalePixels(const SkPixmap& dst, SkFilterQuality fq,
+                     CachingHint cachingHint = kAllow_CachingHint) const {
+        return this->scalePixels(dst, SkSamplingOptions(fq), cachingHint);
+    }
+#endif
 
     /** Encodes SkImage pixels, returning result as SkData.
 

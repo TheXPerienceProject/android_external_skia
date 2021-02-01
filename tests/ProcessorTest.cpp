@@ -16,7 +16,6 @@
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRenderTargetContext.h"
-#include "src/gpu/GrRenderTargetContextPriv.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -65,15 +64,17 @@ private:
     GrProgramInfo* programInfo() override { return nullptr; }
     void onCreateProgramInfo(const GrCaps*,
                              SkArenaAlloc*,
-                             const GrSurfaceProxyView* writeView,
+                             const GrSurfaceProxyView& writeView,
                              GrAppliedClip&&,
                              const GrXferProcessor::DstProxyView&,
-                             GrXferBarrierFlags renderPassXferBarriers) override {}
+                             GrXferBarrierFlags renderPassXferBarriers,
+                             GrLoadOp colorLoadOp) override {}
     void onPrePrepareDraws(GrRecordingContext*,
-                           const GrSurfaceProxyView* writeView,
+                           const GrSurfaceProxyView& writeView,
                            GrAppliedClip*,
                            const GrXferProcessor::DstProxyView&,
-                           GrXferBarrierFlags renderPassXferBarriers) override {}
+                           GrXferBarrierFlags renderPassXferBarriers,
+                           GrLoadOp colorLoadOp) override {}
     void onPrepareDraws(Target* target) override { return; }
     void onExecute(GrOpFlushState*, const SkRect&) override { return; }
 
@@ -175,10 +176,10 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ProcessorRefTest, reporter, ctxInfo) {
                         clone = fp->clone();
                     }
                     GrOp::Owner op = TestOp::Make(context, std::move(fp));
-                    renderTargetContext->priv().testingOnly_addDrawOp(std::move(op));
+                    renderTargetContext->addDrawOp(std::move(op));
                     if (clone) {
                         op = TestOp::Make(context, std::move(clone));
-                        renderTargetContext->priv().testingOnly_addDrawOp(std::move(op));
+                        renderTargetContext->addDrawOp(std::move(op));
                     }
                 }
 
@@ -235,7 +236,7 @@ void test_draw_op(GrRecordingContext* rContext,
 
     auto op = GrFillRectOp::MakeNonAARect(rContext, std::move(paint), SkMatrix::I(),
                                           SkRect::MakeWH(rtc->width(), rtc->height()));
-    rtc->priv().testingOnly_addDrawOp(std::move(op));
+    rtc->addDrawOp(std::move(op));
 }
 
 // The output buffer must be the same size as the render-target context.

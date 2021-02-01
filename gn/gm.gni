@@ -75,6 +75,7 @@ gm_sources = [
   "$_gm/circles.cpp",
   "$_gm/circulararcs.cpp",
   "$_gm/circularclips.cpp",
+  "$_gm/clear_swizzle.cpp",
   "$_gm/clip_error.cpp",
   "$_gm/clip_sierpinski_region.cpp",
   "$_gm/clip_strokerect.cpp",
@@ -400,7 +401,7 @@ gm_sources = [
   "$_gm/xfermodes3.cpp",
   "$_gm/ycbcrimage.cpp",
   "$_gm/yuv420_odd_dim.cpp",
-  "$_gm/yuvtorgbeffect.cpp",
+  "$_gm/yuvtorgbsubset.cpp",
 ]
 
 gl_gm_sources = [ "$_gm/rectangletexture.cpp" ]

@@ -5555,3 +5555,122 @@ DEF_TEST(SkParagraph_FontResolutionInLTR, reporter) {
 
 #endif
 }
+
+DEF_TEST(SkParagraph_Intrinsic, reporter) {
+    sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
+    if (!fontCollection->fontsFound()) return;
+    SkString text(std::string(3000, 'a'));
+
+    ParagraphStyle paragraph_style;
+    paragraph_style.turnHintingOff();
+    ParagraphBuilderImpl builder(paragraph_style, fontCollection);
+
+    TextStyle text_style;
+    text_style.setFontFamilies({SkString("Google Sans")});
+    text_style.setFontSize(12.0f);
+    text_style.setColor(SK_ColorBLACK);
+    builder.pushStyle(text_style);
+    builder.addText(text.c_str());
+
+    auto paragraph = builder.Build();
+    paragraph->layout(300000.0f);
+    REPORTER_ASSERT(reporter, paragraph->getMinIntrinsicWidth() <= paragraph->getMaxIntrinsicWidth());
+}
+
+DEF_TEST(SkParagraph_NoCache1, reporter) {
+
+    ParagraphCache cache;
+    cache.turnOn(true);
+
+    sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>(true);
+    if (!fontCollection->fontsFound()) return;
+    TestCanvas canvas("SkParagraph_NoCache1.png");
+    // Long arabic text with english spaces
+    const char* text =
+            "من أسر وإعلان الخاصّة وهولندا،, عل قائمة الضغوط بالمطالبة تلك. الصفحة "
+            "من أسر وإعلان الخاصّة وهولندا،, عل قائمة الضغوط بالمطالبة تلك. الصفحة "
+            "من أسر وإعلان الخاصّة وهولندا،, عل قائمة الضغوط بالمطالبة تلك. الصفحة "
+            "من أسر وإعلان الخاصّة وهولندا،, عل قائمة الضغوط بالمطالبة تلك. الصفحة "
+            "من أسر وإعلان الخاصّة وهولندا،, عل قائمة الضغوط بالمطالبة تلك. الصفحة "
+            "عل بمباركة التقليدية قام عن. تصفح";
+
+    SkString str;
+
+    ParagraphStyle paragraph_style;
+    paragraph_style.setTextDirection(TextDirection::kLtr);
+    TextStyle text_style;
+    text_style.setFontFamilies({SkString("Ahem")});
+    text_style.setFontSize(14);
+    text_style.setColor(SK_ColorBLACK);
+
+
+    auto test = [&](const char* test, const char* text, bool editing) {
+        ParagraphBuilderImpl builder(paragraph_style, fontCollection);
+        //SkDebugf("test %s:\n", test);
+        builder.pushStyle(text_style);
+        builder.addText(text);
+        builder.pop();
+
+        auto cache = fontCollection->getParagraphCache();
+        auto countBefore = cache->count();
+        auto paragraph = builder.Build();
+        paragraph->layout(TestCanvasWidth);
+        auto countAfter = cache->count();
+        //paragraph->paint(canvas.get(), 0, 0);
+
+        if (test == nullptr) {
+            return;
+        }
+
+        REPORTER_ASSERT(reporter, (countBefore == countAfter) == editing);
+    };
+
+    str.append(text);
+    test("Long arabic text", str.c_str(), false);
+
+    str.append("عل");
+    test("+2 character at the end", str.c_str(), true);
+
+    str = SkString(text);
+    test("-2 characters from the end", str.c_str(), true);
+
+    str.insert(0, "عل");
+    test("+2 character at the start", str.c_str(), true);
+
+    test("-2 characters from the start", text, true);
+
+    // Make sure that different strings are not flagged as editing
+    test("different strings", "0123456789 0123456789 0123456789 0123456789 0123456789", false);
+}
+
+DEF_TEST(SkParagraph_HeightCalculations, reporter) {
+    sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
+    if (!fontCollection->fontsFound()) return;
+
+    TestCanvas canvas("SkParagraph_HeightCalculations.png");
+
+    auto draw = [&](TextHeightBehavior hb, const char* text, SkScalar height) {
+        ParagraphStyle paragraph_style;
+        paragraph_style.setTextHeightBehavior(hb);
+
+        ParagraphBuilderImpl builder(paragraph_style, fontCollection);
+        TextStyle text_style;
+        text_style.setFontFamilies({SkString("Roboto")});
+        text_style.setFontSize(14.0f);
+        text_style.setHeight(5.0f);
+        text_style.setHeightOverride(true);
+        text_style.setColor(SK_ColorBLACK);
+        builder.pushStyle(text_style);
+        builder.addText(text);
+
+        auto paragraph = builder.Build();
+        paragraph->layout(500);
+        paragraph->paint(canvas.get(), 0, 0);
+        canvas.get()->translate(0, paragraph->getHeight());
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(paragraph->getHeight(), height));
+    };
+
+    draw(TextHeightBehavior::kAll, "Hello\nLine 2\nLine 3", 210);
+    draw(TextHeightBehavior::kDisableAll, "Hello\nLine 2\nLine 3", 157);
+    draw(TextHeightBehavior::kDisableFirstAscent, "Hello", 28);
+}

@@ -78,17 +78,15 @@ SkRect SkSVGLengthContext::resolveRect(const SkSVGLength& x, const SkSVGLength& 
 namespace {
 
 SkPaint::Cap toSkCap(const SkSVGLineCap& cap) {
-    switch (cap.type()) {
-    case SkSVGLineCap::Type::kButt:
+    switch (cap) {
+    case SkSVGLineCap::kButt:
         return SkPaint::kButt_Cap;
-    case SkSVGLineCap::Type::kRound:
+    case SkSVGLineCap::kRound:
         return SkPaint::kRound_Cap;
-    case SkSVGLineCap::Type::kSquare:
+    case SkSVGLineCap::kSquare:
         return SkPaint::kSquare_Cap;
-    default:
-        SkASSERT(false);
-        return SkPaint::kButt_Cap;
     }
+    SkUNREACHABLE;
 }
 
 SkPaint::Join toSkJoin(const SkSVGLineJoin& join) {
@@ -121,14 +119,13 @@ void applySvgPaint(const SkSVGRenderContext& ctx, const SkSVGPaint& svgPaint, Sk
         p->setColor(*ctx.presentationContext().fInherited.fColor);
         break;
     case SkSVGPaint::Type::kNone:
-        // Fall through.
-    case SkSVGPaint::Type::kInherit:
+        // Do nothing
         break;
     }
 }
 
 inline uint8_t opacity_to_alpha(SkScalar o) {
-    return SkTo<uint8_t>(SkScalarRoundToInt(o * 255));
+    return SkTo<uint8_t>(SkScalarRoundToInt(SkTPin<SkScalar>(o, 0, 1) * 255));
 }
 
 // Commit the selected attribute to the paint cache.
@@ -141,20 +138,14 @@ template <>
 void commitToPaint<SkSVGAttribute::kFill>(const SkSVGPresentationAttributes& attrs,
                                           const SkSVGRenderContext& ctx,
                                           SkSVGPresentationContext* pctx) {
-    const auto& fill = *attrs.fFill;
-    SkASSERT(fill.type() != SkSVGPaint::Type::kInherit);
-
-    applySvgPaint(ctx, fill, &pctx->fFillPaint);
+    applySvgPaint(ctx, *attrs.fFill, &pctx->fFillPaint);
 }
 
 template <>
 void commitToPaint<SkSVGAttribute::kStroke>(const SkSVGPresentationAttributes& attrs,
                                             const SkSVGRenderContext& ctx,
                                             SkSVGPresentationContext* pctx) {
-    const auto& stroke = *attrs.fStroke;
-    SkASSERT(stroke.type() != SkSVGPaint::Type::kInherit);
-
-    applySvgPaint(ctx, stroke, &pctx->fStrokePaint);
+    applySvgPaint(ctx, *attrs.fStroke, &pctx->fStrokePaint);
 }
 
 template <>
@@ -168,7 +159,7 @@ template <>
 void commitToPaint<SkSVGAttribute::kStrokeDashArray>(const SkSVGPresentationAttributes& attrs,
                                                      const SkSVGRenderContext& ctx,
                                                      SkSVGPresentationContext* pctx) {
-    const auto& dashArray = attrs.fStrokeDashArray.get();
+    const auto& dashArray = attrs.fStrokeDashArray.getMaybeNull();
     SkASSERT(dashArray->type() != SkSVGDashArray::Type::kInherit);
 
     if (dashArray->type() != SkSVGDashArray::Type::kDashArray) {
@@ -209,10 +200,7 @@ template <>
 void commitToPaint<SkSVGAttribute::kStrokeLineCap>(const SkSVGPresentationAttributes& attrs,
                                                    const SkSVGRenderContext&,
                                                    SkSVGPresentationContext* pctx) {
-    const auto& cap = *attrs.fStrokeLineCap;
-    SkASSERT(cap.type() != SkSVGLineCap::Type::kInherit);
-
-    pctx->fStrokePaint.setStrokeCap(toSkCap(cap));
+    pctx->fStrokePaint.setStrokeCap(toSkCap(*attrs.fStrokeLineCap));
 }
 
 template <>
@@ -391,13 +379,13 @@ void SkSVGRenderContext::applyPresentationAttributes(const SkSVGPresentationAttr
 #define ApplyLazyInheritedAttribute(ATTR)                                               \
     do {                                                                                \
         /* All attributes should be defined on the inherited context. */                \
-        SkASSERT(fPresentationContext->fInherited.f ## ATTR.isValid());                 \
-        const auto* value = attrs.f ## ATTR.getMaybeNull();                             \
-        if (value && *value != *fPresentationContext->fInherited.f ## ATTR.get()) {     \
+        SkASSERT(fPresentationContext->fInherited.f ## ATTR.isValue());                 \
+        const auto& attr = attrs.f ## ATTR;                                             \
+        if (attr.isValue() && *attr != *fPresentationContext->fInherited.f ## ATTR) {   \
             /* Update the local attribute value */                                      \
-            fPresentationContext.writable()->fInherited.f ## ATTR.set(*value);          \
+            fPresentationContext.writable()->fInherited.f ## ATTR.set(*attr);           \
             /* Update the cached paints */                                              \
-            commitToPaint<SkSVGAttribute::k ## ATTR>(attrs, *this,    \
+            commitToPaint<SkSVGAttribute::k ## ATTR>(attrs, *this,                      \
                                                      fPresentationContext.writable());  \
         }                                                                               \
     } while (false)
@@ -423,7 +411,7 @@ void SkSVGRenderContext::applyPresentationAttributes(const SkSVGPresentationAttr
     ApplyLazyInheritedAttribute(Color);
 
     // Local 'color' attribute: update paints for attributes that are set to 'currentColor'.
-    if (attrs.fColor.isValid()) {
+    if (attrs.fColor.isValue()) {
         updatePaintsWithCurrentColor(attrs);
     }
 
@@ -431,17 +419,17 @@ void SkSVGRenderContext::applyPresentationAttributes(const SkSVGPresentationAttr
 
     // Uninherited attributes.  Only apply to the current context.
 
-    if (auto* opacity = attrs.fOpacity.getMaybeNull()) {
-        this->applyOpacity(*opacity, flags);
+    if (attrs.fOpacity.isValue()) {
+        this->applyOpacity(*attrs.fOpacity, flags);
     }
 
-    if (auto* clip = attrs.fClipPath.getMaybeNull()) {
-        this->applyClip(*clip);
+    if (attrs.fClipPath.isValue()) {
+        this->applyClip(*attrs.fClipPath);
     }
 
     // TODO: when both a filter and opacity are present, we can apply both with a single layer
-    if (auto* filter = attrs.fFilter.getMaybeNull()) {
-        this->applyFilter(*filter);
+    if (attrs.fFilter.isValue()) {
+        this->applyFilter(*attrs.fFilter);
     }
 }
 

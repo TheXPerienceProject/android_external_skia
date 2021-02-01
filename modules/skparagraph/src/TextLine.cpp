@@ -283,11 +283,11 @@ SkScalar TextLine::metricsWithoutMultiplier(TextHeightBehavior correction) {
     SkScalar delta = 0;
     if (correction  == TextHeightBehavior::kDisableFirstAscent) {
         delta += (this->fSizes.fAscent - result.fAscent);
-        this->fSizes.fAscent -= delta;
+        this->fSizes.fAscent = result.fAscent;
         this->fAscentStyle = LineMetricStyle::Typographic;
     } else if (correction  == TextHeightBehavior::kDisableLastDescent) {
         delta -= (this->fSizes.fDescent - result.fDescent);
-        this->fSizes.fDescent -= delta;
+        this->fSizes.fDescent = result.fDescent;
         this->fDescentStyle = LineMetricStyle::Typographic;
     }
     fAdvance.fY += delta;
@@ -723,12 +723,15 @@ SkScalar TextLine::iterateThroughSingleRunByStyles(const Run* run,
     size_t size = 0;
     const TextStyle* prevStyle = nullptr;
     SkScalar textOffsetInRun = 0;
-    for (BlockIndex index = fBlockRange.start; index <= fBlockRange.end; ++index) {
+
+    const BlockIndex blockRangeSize = fBlockRange.end - fBlockRange.start;
+    for (BlockIndex index = 0; index <= blockRangeSize; ++index) {
 
         TextRange intersect;
         TextStyle* style = nullptr;
-        if (index < fBlockRange.end) {
-            auto block = fOwner->styles().begin() + index;
+        if (index < blockRangeSize) {
+            auto block = fOwner->styles().begin() +
+                 (run->leftToRight() ? fBlockRange.start + index : fBlockRange.end - index - 1);
 
             // Get the text
             intersect = intersected(block->fRange, textRange);

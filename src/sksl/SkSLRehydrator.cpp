@@ -38,6 +38,7 @@
 #include "src/sksl/ir/SkSLReturnStatement.h"
 #include "src/sksl/ir/SkSLSetting.h"
 #include "src/sksl/ir/SkSLStatement.h"
+#include "src/sksl/ir/SkSLStructDefinition.h"
 #include "src/sksl/ir/SkSLSwitchCase.h"
 #include "src/sksl/ir/SkSLSwitchStatement.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
@@ -326,22 +327,21 @@ std::unique_ptr<ProgramElement> Rehydrator::element() {
             SkASSERT(var && var->is<Variable>());
             StringFragment typeName = this->readString();
             StringFragment instanceName = this->readString();
-            uint8_t sizeCount = this->readU8();
-            ExpressionArray sizes;
-            sizes.reserve_back(sizeCount);
-            for (int i = 0; i < sizeCount; ++i) {
-                sizes.push_back(this->expression());
-            }
+            int arraySize = this->readS8();
             return std::make_unique<InterfaceBlock>(/*offset=*/-1, &var->as<Variable>(), typeName,
-                                                    instanceName, std::move(sizes), nullptr);
+                                                    instanceName, arraySize, nullptr);
         }
         case Rehydrator::kVarDeclarations_Command: {
             std::unique_ptr<Statement> decl = this->statement();
             return std::make_unique<GlobalVarDeclaration>(/*offset=*/-1, std::move(decl));
         }
+        case Rehydrator::kStructDefinition_Command: {
+            const Symbol* type = this->symbol();
+            SkASSERT(type && type->is<Type>());
+            return std::make_unique<StructDefinition>(/*offset=*/-1, type->as<Type>());
+        }
         case Rehydrator::kElementsComplete_Command:
             return nullptr;
-
         default:
             SkDEBUGFAILF("unsupported element %d\n", kind);
             return nullptr;
@@ -436,18 +436,12 @@ std::unique_ptr<Statement> Rehydrator::statement() {
         case Rehydrator::kVarDeclaration_Command: {
             Variable* var = this->symbolRef<Variable>(Symbol::Kind::kVariable);
             const Type* baseType = this->type();
-            uint8_t sizeCount = this->readU8();
-            ExpressionArray sizes;
-            sizes.reserve_back(sizeCount);
-            for (int i = 0; i < sizeCount; ++i) {
-                sizes.push_back(this->expression());
-            }
+            int arraySize = this->readS8();
             std::unique_ptr<Expression> value = this->expression();
             if (value) {
                 var->setInitialValue(value.get());
             }
-            return std::make_unique<VarDeclaration>(var, baseType, std::move(sizes),
-                                                    std::move(value));
+            return std::make_unique<VarDeclaration>(var, baseType, arraySize, std::move(value));
         }
         case Rehydrator::kVoid_Command:
             return nullptr;
@@ -496,9 +490,10 @@ std::unique_ptr<Expression> Rehydrator::expression() {
             return std::make_unique<FieldAccess>(std::move(base), index, ownerKind);
         }
         case Rehydrator::kFloatLiteral_Command: {
+            const Type* type = this->type();
             FloatIntUnion u;
             u.fInt = this->readS32();
-            return std::make_unique<FloatLiteral>(fContext, -1, u.fFloat);
+            return std::make_unique<FloatLiteral>(-1, u.fFloat, type);
         }
         case Rehydrator::kFunctionCall_Command: {
             const Type* type = this->type();
@@ -518,8 +513,9 @@ std::unique_ptr<Expression> Rehydrator::expression() {
             return std::make_unique<IndexExpression>(fContext, std::move(base), std::move(index));
         }
         case Rehydrator::kIntLiteral_Command: {
+            const Type* type = this->type();
             int value = this->readS32();
-            return std::make_unique<IntLiteral>(fContext, -1, value);
+            return std::make_unique<IntLiteral>(-1, value, type);
         }
         case Rehydrator::kNullLiteral_Command:
             return std::make_unique<NullLiteral>(fContext, -1);

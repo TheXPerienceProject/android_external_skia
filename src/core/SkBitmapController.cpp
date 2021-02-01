@@ -11,7 +11,6 @@
 #include "src/core/SkArenaAlloc.h"
 #include "src/core/SkBitmapCache.h"
 #include "src/core/SkBitmapController.h"
-#include "src/core/SkMatrixPriv.h"
 #include "src/core/SkMipmap.h"
 #include "src/image/SkImage_Base.h"
 
@@ -26,95 +25,6 @@ static sk_sp<const SkMipmap> try_load_mips(const SkImage_Base* image) {
     }
     return mips;
 }
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-SkBitmapController::State* SkBitmapController::RequestBitmap(const SkImage_Base* image,
-                                                             const SkMatrix& inv,
-                                                             SkFilterQuality quality,
-                                                             SkArenaAlloc* alloc) {
-    auto* state = alloc->make<SkBitmapController::State>(image, inv, quality);
-
-    return state->pixmap().addr() ? state : nullptr;
-}
-
-bool SkBitmapController::State::processHighRequest(const SkImage_Base* image) {
-    if (fQuality != kHigh_SkFilterQuality) {
-        return false;
-    }
-
-    if (SkMatrixPriv::AdjustHighQualityFilterLevel(fInvMatrix, true) != kHigh_SkFilterQuality) {
-        fQuality = kMedium_SkFilterQuality;
-        return false;
-    }
-
-    (void)image->getROPixels(nullptr, &fResultBitmap);
-    return true;
-}
-
-/*
- *  Modulo internal errors, this should always succeed *if* the matrix is downscaling
- *  (in this case, we have the inverse, so it succeeds if fInvMatrix is upscaling)
- */
-bool SkBitmapController::State::processMediumRequest(const SkImage_Base* image) {
-    SkASSERT(fQuality <= kMedium_SkFilterQuality);
-    if (fQuality != kMedium_SkFilterQuality) {
-        return false;
-    }
-
-    // Our default return state is to downgrade the request to Low, w/ or w/o setting fBitmap
-    // to a valid bitmap.
-    fQuality = kLow_SkFilterQuality;
-
-    SkSize invScaleSize;
-    if (!fInvMatrix.decomposeScale(&invScaleSize, nullptr)) {
-        return false;
-    }
-
-    if (invScaleSize.width() > SK_Scalar1 || invScaleSize.height() > SK_Scalar1) {
-        fCurrMip = try_load_mips(image);
-        if (!fCurrMip) {
-            return false;
-        }
-        // diagnostic for a crasher...
-        SkASSERT_RELEASE(fCurrMip->data());
-
-        const SkSize scale = SkSize::Make(SkScalarInvert(invScaleSize.width()),
-                                          SkScalarInvert(invScaleSize.height()));
-        SkMipmap::Level level;
-        if (fCurrMip->extractLevel(scale, &level)) {
-            const SkSize& invScaleFixup = level.fScale;
-            fInvMatrix.postScale(invScaleFixup.width(), invScaleFixup.height());
-
-            // todo: if we could wrap the fCurrMip in a pixelref, then we could just install
-            //       that here, and not need to explicitly track it ourselves.
-            return fResultBitmap.installPixels(level.fPixmap);
-        } else {
-            // failed to extract, so release the mipmap
-            fCurrMip.reset(nullptr);
-        }
-    }
-    return false;
-}
-
-SkBitmapController::State::State(const SkImage_Base* image,
-                                 const SkMatrix& inv,
-                                 SkFilterQuality qual) {
-    fInvMatrix = inv;
-    fQuality = qual;
-
-    if (this->processHighRequest(image) || this->processMediumRequest(image)) {
-        SkASSERT(fResultBitmap.getPixels());
-    } else {
-        (void)image->getROPixels(nullptr, &fResultBitmap);
-    }
-
-    // fResultBitmap.getPixels() may be null, but our caller knows to check fPixmap.addr()
-    // and will destroy us if it is nullptr.
-    fPixmap.reset(fResultBitmap.info(), fResultBitmap.getPixels(), fResultBitmap.rowBytes());
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
 
 SkMipmapAccessor::SkMipmapAccessor(const SkImage_Base* image, const SkMatrix& inv,
                                    SkMipmapMode requestedMode) {
@@ -142,6 +52,11 @@ SkMipmapAccessor::SkMipmapAccessor(const SkImage_Base* image, const SkMatrix& in
             }
         }
     }
+
+    auto post_scale = [image, inv](const SkPixmap& pm) {
+        return SkMatrix::Scale(SkIntToScalar(pm.width())  / image->width(),
+                               SkIntToScalar(pm.height()) / image->height()) * inv;
+    };
 
     int levelNum = sk_float_floor2int(level);
     float lowerWeight = level - levelNum;   // fract(level)
@@ -173,10 +88,12 @@ SkMipmapAccessor::SkMipmapAccessor(const SkImage_Base* image, const SkMatrix& in
                 if (fCurrMip->getLevel(levelNum, &levelRec)) {
                     fLower = levelRec.fPixmap;
                     fLowerWeight = lowerWeight;
+                    fLowerInv = post_scale(fLower);
                 } else {
                     fResolvedMode = SkMipmapMode::kNearest;
                 }
             }
         }
     }
+    fUpperInv = post_scale(fUpper);
 }

@@ -3,10 +3,6 @@
 #pragma once
 #include "SkUserConfigManual.h"
 
-#ifndef GR_OP_ALLOCATE_USE_NEW
-#define GR_OP_ALLOCATE_USE_NEW
-#endif
-
 #ifndef SK_CODEC_DECODES_JPEG
 #define SK_CODEC_DECODES_JPEG
 #endif
@@ -57,6 +53,10 @@
 
 #ifndef SK_GL
 #define SK_GL
+#endif
+
+#ifndef SK_HAS_ANDROID_CODEC
+#define SK_HAS_ANDROID_CODEC
 #endif
 
 #ifndef SK_HAS_HEIF_LIBRARY

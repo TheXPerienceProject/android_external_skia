@@ -105,13 +105,13 @@ sk_sp<GrGpu> GrMtlGpu::Make(const GrMtlBackendContext& context, const GrContextO
     if (!context.fDevice || !context.fQueue) {
         return nullptr;
     }
-    if (@available(macOS 10.14, iOS 9.0, *)) {
+    if (@available(macOS 10.14, iOS 10.0, *)) {
         // no warning needed
     } else {
         SkDebugf("*** Warning ***: this OS version is deprecated and will no longer be supported " \
                  "in future releases.\n");
 #ifdef SK_BUILD_FOR_IOS
-        SkDebugf("Minimum recommended version is iOS 9.0.\n");
+        SkDebugf("Minimum recommended version is iOS 10.0.\n");
 #else
         SkDebugf("Minimum recommended version is MacOS 10.14.\n");
 #endif
@@ -123,7 +123,8 @@ sk_sp<GrGpu> GrMtlGpu::Make(const GrMtlBackendContext& context, const GrContextO
     if (!get_feature_set(device, &featureSet)) {
         return nullptr;
     }
-    return sk_sp<GrGpu>(new GrMtlGpu(direct, options, device, queue, featureSet));
+    return sk_sp<GrGpu>(new GrMtlGpu(direct, options, device, queue, context.fBinaryArchive.get(),
+                                     featureSet));
 }
 
 // This constant determines how many OutstandingCommandBuffers are allocated together as a block in
@@ -133,7 +134,8 @@ sk_sp<GrGpu> GrMtlGpu::Make(const GrMtlBackendContext& context, const GrContextO
 static const int kDefaultOutstandingAllocCnt = 8;
 
 GrMtlGpu::GrMtlGpu(GrDirectContext* direct, const GrContextOptions& options,
-                   id<MTLDevice> device, id<MTLCommandQueue> queue, MTLFeatureSet featureSet)
+                   id<MTLDevice> device, id<MTLCommandQueue> queue, GrMTLHandle binaryArchive,
+                   MTLFeatureSet featureSet)
         : INHERITED(direct)
         , fDevice(device)
         , fQueue(queue)
@@ -145,6 +147,11 @@ GrMtlGpu::GrMtlGpu(GrDirectContext* direct, const GrContextOptions& options,
     fCaps = fMtlCaps;
     fCompiler.reset(new SkSL::Compiler(fMtlCaps->shaderCaps()));
     fCurrentCmdBuffer = GrMtlCommandBuffer::Make(fQueue);
+#if GR_METAL_SDK_VERSION >= 230
+    if (@available(macOS 11.0, iOS 14.0, *)) {
+        fBinaryArchive = (__bridge id<MTLBinaryArchive>)(binaryArchive);
+    }
+#endif
 }
 
 GrMtlGpu::~GrMtlGpu() {
@@ -172,7 +179,6 @@ void GrMtlGpu::destroyResources() {
                 (OutstandingCommandBuffer*)fOutstandingCommandBuffers.front();
         // make sure we remove before deleting as deletion might try to kick off another submit
         fOutstandingCommandBuffers.pop_front();
-        this->deleteFence(buffer->fFence);
         buffer->~OutstandingCommandBuffer();
     }
 
@@ -222,7 +228,7 @@ bool GrMtlGpu::submitCommandBuffer(SyncQueue sync) {
             OutstandingCommandBuffer* back =
                     (OutstandingCommandBuffer*)fOutstandingCommandBuffers.back();
             if (back) {
-                back->fCommandBuffer->waitUntilCompleted();
+                (*back)->waitUntilCompleted();
             }
             this->checkForFinishedCommandBuffers();
         }
@@ -235,9 +241,7 @@ bool GrMtlGpu::submitCommandBuffer(SyncQueue sync) {
     }
 
     SkASSERT(fCurrentCmdBuffer);
-    GrFence fence = this->insertFence();
-    new (fOutstandingCommandBuffers.push_back()) OutstandingCommandBuffer(
-            fCurrentCmdBuffer, fence);
+    new (fOutstandingCommandBuffers.push_back()) OutstandingCommandBuffer(fCurrentCmdBuffer);
 
     if (!fCurrentCmdBuffer->commit(sync == SyncQueue::kForce_SyncQueue)) {
         return false;
@@ -263,11 +267,10 @@ void GrMtlGpu::checkForFinishedCommandBuffers() {
     // Repeat till we find a command list that has not finished yet (and all others afterwards are
     // also guaranteed to not have finished).
     OutstandingCommandBuffer* front = (OutstandingCommandBuffer*)fOutstandingCommandBuffers.front();
-    while (front && this->waitFence(front->fFence)) {
+    while (front && (*front)->isCompleted()) {
         // Make sure we remove before deleting as deletion might try to kick off another submit
         fOutstandingCommandBuffers.pop_front();
         // Since we used placement new we are responsible for calling the destructor manually.
-        this->deleteFence(front->fFence);
         front->~OutstandingCommandBuffer();
         front = (OutstandingCommandBuffer*)fOutstandingCommandBuffers.front();
     }
@@ -289,7 +292,7 @@ void GrMtlGpu::addFinishedCallback(sk_sp<GrRefCntedCallback> finishedCallback) {
     // must finish after all previously submitted command buffers.
     OutstandingCommandBuffer* back = (OutstandingCommandBuffer*)fOutstandingCommandBuffers.back();
     if (back) {
-        back->fCommandBuffer->addFinishedCallback(finishedCallback);
+        (*back)->addFinishedCallback(finishedCallback);
     }
     commandBuffer()->addFinishedCallback(std::move(finishedCallback));
 }

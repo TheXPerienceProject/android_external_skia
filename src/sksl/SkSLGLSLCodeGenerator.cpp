@@ -15,6 +15,7 @@
 #include "src/sksl/ir/SkSLIndexExpression.h"
 #include "src/sksl/ir/SkSLModifiersDeclaration.h"
 #include "src/sksl/ir/SkSLNop.h"
+#include "src/sksl/ir/SkSLStructDefinition.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
 
 #ifndef SKSL_STANDALONE
@@ -81,6 +82,7 @@ bool GLSLCodeGenerator::usesPrecisionModifiers() const {
     return fProgram.fCaps->usesPrecisionModifiers();
 }
 
+// Returns the name of the type with array dimensions, e.g. `float[2][4]`.
 String GLSLCodeGenerator::getTypeName(const Type& type) {
     switch (type.typeKind()) {
         case Type::TypeKind::kVector: {
@@ -121,12 +123,10 @@ String GLSLCodeGenerator::getTypeName(const Type& type) {
             return result;
         }
         case Type::TypeKind::kArray: {
-            String result = this->getTypeName(type.componentType()) + "[";
-            if (type.columns() != Type::kUnsizedArray) {
-                result += to_string(type.columns());
-            }
-            result += "]";
-            return result;
+            String baseTypeName = this->getTypeName(type.componentType());
+            return (type.columns() == Type::kUnsizedArray)
+                           ? String::printf("%s[]", baseTypeName.c_str())
+                           : String::printf("%s[%d]", baseTypeName.c_str(), type.columns());
         }
         case Type::TypeKind::kScalar: {
             if (type == *fContext.fHalf_Type) {
@@ -156,31 +156,37 @@ String GLSLCodeGenerator::getTypeName(const Type& type) {
     }
 }
 
+bool GLSLCodeGenerator::writeStructDefinition(const Type& type) {
+    for (const Type* search : fWrittenStructs) {
+        if (*search == type) {
+            // already written
+            return false;
+        }
+    }
+    fWrittenStructs.push_back(&type);
+    this->write("struct ");
+    this->write(type.name());
+    this->writeLine(" {");
+    fIndentation++;
+    for (const auto& f : type.fields()) {
+        this->writeModifiers(f.fModifiers, false);
+        this->writeTypePrecision(*f.fType);
+        // sizes (which must be static in structs) are part of the type name here
+        this->writeType(*f.fType);
+        this->write(" ");
+        this->write(f.fName);
+        this->writeLine(";");
+    }
+    fIndentation--;
+    this->write("}");
+    return true;
+}
+
 void GLSLCodeGenerator::writeType(const Type& type) {
-    if (type.typeKind() == Type::TypeKind::kStruct) {
-        for (const Type* search : fWrittenStructs) {
-            if (*search == type) {
-                // already written
-                this->write(type.name());
-                return;
-            }
+    if (type.isStruct()) {
+        if (!this->writeStructDefinition(type)) {
+            this->write(type.name());
         }
-        fWrittenStructs.push_back(&type);
-        this->write("struct ");
-        this->write(type.name());
-        this->writeLine(" {");
-        fIndentation++;
-        for (const auto& f : type.fields()) {
-            this->writeModifiers(f.fModifiers, false);
-            this->writeTypePrecision(*f.fType);
-            // sizes (which must be static in structs) are part of the type name here
-            this->writeType(*f.fType);
-            this->write(" ");
-            this->write(f.fName);
-            this->writeLine(";");
-        }
-        fIndentation--;
-        this->write("}");
     } else {
         this->write(this->getTypeName(type));
     }
@@ -720,7 +726,7 @@ void GLSLCodeGenerator::writeFunctionCall(const FunctionCall& c) {
 void GLSLCodeGenerator::writeConstructor(const Constructor& c, Precedence parentPrecedence) {
     if (c.arguments().size() == 1 &&
         (this->getTypeName(c.type()) == this->getTypeName(c.arguments()[0]->type()) ||
-        (c.type().typeKind() == Type::TypeKind::kScalar &&
+        (c.type().isScalar() &&
          c.arguments()[0]->type() == *fContext.fFloatLiteral_Type))) {
         // in cases like half(float), they're different types as far as SkSL is concerned but the
         // same type as far as GLSL is concerned. We avoid a redundant float(float) by just writing
@@ -892,9 +898,6 @@ GLSLCodeGenerator::Precedence GLSLCodeGenerator::GetBinaryPrecedence(Token::Kind
         case Token::Kind::TK_PERCENTEQ:    // fall through
         case Token::Kind::TK_SHLEQ:        // fall through
         case Token::Kind::TK_SHREQ:        // fall through
-        case Token::Kind::TK_LOGICALANDEQ: // fall through
-        case Token::Kind::TK_LOGICALXOREQ: // fall through
-        case Token::Kind::TK_LOGICALOREQ:  // fall through
         case Token::Kind::TK_BITWISEANDEQ: // fall through
         case Token::Kind::TK_BITWISEXOREQ: // fall through
         case Token::Kind::TK_BITWISEOREQ:  return GLSLCodeGenerator::kAssignment_Precedence;
@@ -1044,7 +1047,7 @@ void GLSLCodeGenerator::writeFunctionDeclaration(const FunctionDeclaration& f) {
         this->writeModifiers(param->modifiers(), false);
         std::vector<int> sizes;
         const Type* type = &param->type();
-        while (type->typeKind() == Type::TypeKind::kArray) {
+        if (type->isArray()) {
             sizes.push_back(type->columns());
             type = &type->componentType();
         }
@@ -1189,7 +1192,7 @@ void GLSLCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf) {
     this->writeLine(intf.typeName() + " {");
     fIndentation++;
     const Type* structType = &intf.variable().type();
-    while (structType->typeKind() == Type::TypeKind::kArray) {
+    if (structType->isArray()) {
         structType = &structType->componentType();
     }
     for (const auto& f : structType->fields()) {
@@ -1203,12 +1206,12 @@ void GLSLCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf) {
     if (intf.instanceName().size()) {
         this->write(" ");
         this->write(intf.instanceName());
-        for (const auto& size : intf.sizes()) {
+        if (intf.arraySize() > 0) {
             this->write("[");
-            if (size) {
-                this->writeExpression(*size, kTopLevel_Precedence);
-            }
+            this->write(to_string(intf.arraySize()));
             this->write("]");
+        } else if (intf.arraySize() == Type::kUnsizedArray){
+            this->write("[]");
         }
     }
     this->writeLine(";");
@@ -1258,12 +1261,12 @@ void GLSLCodeGenerator::writeVarDeclaration(const VarDeclaration& var, bool glob
     this->writeType(var.baseType());
     this->write(" ");
     this->write(var.var().name());
-    for (const std::unique_ptr<Expression>& size : var.sizes()) {
+    if (var.arraySize() > 0) {
         this->write("[");
-        if (size) {
-            this->writeExpression(*size, kTopLevel_Precedence);
-        }
+        this->write(to_string(var.arraySize()));
         this->write("]");
+    } else if (var.arraySize() == Type::kUnsizedArray){
+        this->write("[]");
     }
     if (var.value()) {
         this->write(" = ");
@@ -1540,6 +1543,11 @@ void GLSLCodeGenerator::writeProgramElement(const ProgramElement& e) {
         }
         case ProgramElement::Kind::kEnum:
             break;
+        case ProgramElement::Kind::kStructDefinition:
+            if (this->writeStructDefinition(e.as<StructDefinition>().type())) {
+                this->writeLine(";");
+            }
+            break;
         default:
             SkDEBUGFAILF("unsupported program element %s\n", e.description().c_str());
             break;
@@ -1570,7 +1578,7 @@ bool GLSLCodeGenerator::generateCode() {
     OutputStream* rawOut = fOut;
     StringStream body;
     fOut = &body;
-    for (const auto& e : fProgram.elements()) {
+    for (const ProgramElement* e : fProgram.elements()) {
         this->writeProgramElement(*e);
     }
     fOut = rawOut;

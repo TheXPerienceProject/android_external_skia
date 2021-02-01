@@ -41,18 +41,6 @@
 
 namespace {
 
-bool SetColorAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                       const char* stringValue) {
-    SkSVGColorType color;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseColor(&color)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGColorValue(color));
-    return true;
-}
-
 bool SetIRIAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                       const char* stringValue) {
     auto parseResult = SkSVGAttributeParser::parse<SkSVGIRI>(stringValue);
@@ -107,13 +95,12 @@ bool SetLengthAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
 
 bool SetNumberAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                         const char* stringValue) {
-    SkSVGNumberType number;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseNumber(&number)) {
+    auto parseResult = SkSVGAttributeParser::parse<SkSVGNumberType>(stringValue);
+    if (!parseResult.isValid()) {
         return false;
     }
 
-    node->setAttribute(attr, SkSVGNumberValue(number));
+    node->setAttribute(attr, SkSVGNumberValue(*parseResult));
     return true;
 }
 
@@ -162,18 +149,6 @@ bool SetPointsAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
     }
 
     node->setAttribute(attr, SkSVGPointsValue(points));
-    return true;
-}
-
-bool SetFilterAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                        const char* stringValue) {
-    SkSVGFilterType filter;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseFilter(&filter)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGFilterValue(filter));
     return true;
 }
 
@@ -267,12 +242,9 @@ struct AttrParseInfo {
 };
 
 SortedDictionaryEntry<AttrParseInfo> gAttributeParseInfo[] = {
-    { "color"              , { SkSVGAttribute::kColor            , SetColorAttribute        }},
     { "cx"                 , { SkSVGAttribute::kCx               , SetLengthAttribute       }},
     { "cy"                 , { SkSVGAttribute::kCy               , SetLengthAttribute       }},
     { "d"                  , { SkSVGAttribute::kD                , SetPathDataAttribute     }},
-    { "fill-opacity"       , { SkSVGAttribute::kFillOpacity      , SetNumberAttribute       }},
-    { "filter"             , { SkSVGAttribute::kFilter           , SetFilterAttribute       }},
     { "filterUnits"        , { SkSVGAttribute::kFilterUnits      ,
                                SetObjectBoundingBoxUnitsAttribute }},
     // focal point x & y
@@ -280,7 +252,6 @@ SortedDictionaryEntry<AttrParseInfo> gAttributeParseInfo[] = {
     { "fy"                 , { SkSVGAttribute::kFy               , SetLengthAttribute       }},
     { "height"             , { SkSVGAttribute::kHeight           , SetLengthAttribute       }},
     { "offset"             , { SkSVGAttribute::kOffset           , SetLengthAttribute       }},
-    { "opacity"            , { SkSVGAttribute::kOpacity          , SetNumberAttribute       }},
     { "patternTransform"   , { SkSVGAttribute::kPatternTransform , SetTransformAttribute    }},
     { "points"             , { SkSVGAttribute::kPoints           , SetPointsAttribute       }},
     { "preserveAspectRatio", { SkSVGAttribute::kPreserveAspectRatio,
@@ -290,10 +261,6 @@ SortedDictionaryEntry<AttrParseInfo> gAttributeParseInfo[] = {
     { "ry"                 , { SkSVGAttribute::kRy               , SetLengthAttribute       }},
     { "stop-color"         , { SkSVGAttribute::kStopColor        , SetStopColorAttribute    }},
     { "stop-opacity"       , { SkSVGAttribute::kStopOpacity      , SetNumberAttribute       }},
-    { "stroke-dashoffset"  , { SkSVGAttribute::kStrokeDashOffset , SetLengthAttribute       }},
-    { "stroke-miterlimit"  , { SkSVGAttribute::kStrokeMiterLimit , SetNumberAttribute       }},
-    { "stroke-opacity"     , { SkSVGAttribute::kStrokeOpacity    , SetNumberAttribute       }},
-    { "stroke-width"       , { SkSVGAttribute::kStrokeWidth      , SetLengthAttribute       }},
     { "style"              , { SkSVGAttribute::kUnknown          , SetStyleAttributes       }},
     { "text"               , { SkSVGAttribute::kText             , SetStringAttribute       }},
     { "transform"          , { SkSVGAttribute::kTransform        , SetTransformAttribute    }},

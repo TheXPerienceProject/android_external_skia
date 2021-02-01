@@ -195,10 +195,11 @@ static bool contains_recursive_call(const FunctionDeclaration& funcDecl) {
 }
 
 static const Type* copy_if_needed(const Type* src, SymbolTable& symbolTable) {
-    if (src->typeKind() == Type::TypeKind::kArray) {
+    if (src->isArray()) {
+        const Type* innerType = copy_if_needed(&src->componentType(), symbolTable);
         return symbolTable.takeOwnershipOfSymbol(std::make_unique<Type>(src->name(),
                                                                         src->typeKind(),
-                                                                        src->componentType(),
+                                                                        *innerType,
                                                                         src->columns()));
     }
     return src;
@@ -248,19 +249,6 @@ std::unique_ptr<Expression> clone_with_ref_kind(const Expression& expr,
     return clone;
 }
 
-bool is_trivial_argument(const Expression& argument) {
-    return argument.is<VariableReference>() ||
-           (argument.is<Swizzle>() && is_trivial_argument(*argument.as<Swizzle>().base())) ||
-           (argument.is<FieldAccess>() &&
-            is_trivial_argument(*argument.as<FieldAccess>().base())) ||
-           (argument.is<Constructor>() &&
-            argument.as<Constructor>().arguments().size() == 1 &&
-            is_trivial_argument(*argument.as<Constructor>().arguments().front())) ||
-           (argument.is<IndexExpression>() &&
-            argument.as<IndexExpression>().index()->is<IntLiteral>() &&
-            is_trivial_argument(*argument.as<IndexExpression>().base()));
-}
-
 }  // namespace
 
 void Inliner::ensureScopedBlocks(Statement* inlinedBody, Statement* parentStmt) {
@@ -305,12 +293,9 @@ void Inliner::ensureScopedBlocks(Statement* inlinedBody, Statement* parentStmt) 
     }
 }
 
-void Inliner::reset(const Context* context, ModifiersPool* modifiers,
-                    const Program::Settings* settings, const ShaderCapsClass* caps) {
-    fContext = context;
+void Inliner::reset(ModifiersPool* modifiers, const Program::Settings* settings) {
     fModifiers = modifiers;
     fSettings = settings;
-    fCaps = caps;
     fInlineVarCounter = 0;
     fInlinedStatementCounter = 0;
 }
@@ -339,10 +324,11 @@ String Inliner::uniqueNameForInlineVar(const String& baseName, SymbolTable* symb
 
 std::unique_ptr<Expression> Inliner::inlineExpression(int offset,
                                                       VariableRewriteMap* varMap,
+                                                      SymbolTable* symbolTableForExpression,
                                                       const Expression& expression) {
     auto expr = [&](const std::unique_ptr<Expression>& e) -> std::unique_ptr<Expression> {
         if (e) {
-            return this->inlineExpression(offset, varMap, *e);
+            return this->inlineExpression(offset, varMap, symbolTableForExpression, *e);
         }
         return nullptr;
     };
@@ -371,8 +357,8 @@ std::unique_ptr<Expression> Inliner::inlineExpression(int offset,
             return expression.clone();
         case Expression::Kind::kConstructor: {
             const Constructor& constructor = expression.as<Constructor>();
-            return std::make_unique<Constructor>(offset, &constructor.type(),
-                                                 argList(constructor.arguments()));
+            const Type* type = copy_if_needed(&constructor.type(), *symbolTableForExpression);
+            return std::make_unique<Constructor>(offset, type, argList(constructor.arguments()));
         }
         case Expression::Kind::kExternalFunctionCall: {
             const ExternalFunctionCall& externalCall = expression.as<ExternalFunctionCall>();
@@ -464,7 +450,7 @@ std::unique_ptr<Statement> Inliner::inlineStatement(int offset,
     };
     auto expr = [&](const std::unique_ptr<Expression>& e) -> std::unique_ptr<Expression> {
         if (e) {
-            return this->inlineExpression(offset, varMap, *e);
+            return this->inlineExpression(offset, varMap, symbolTableForStatement, *e);
         }
         return nullptr;
     };
@@ -553,12 +539,8 @@ std::unique_ptr<Statement> Inliner::inlineStatement(int offset,
         }
         case Statement::Kind::kVarDeclaration: {
             const VarDeclaration& decl = statement.as<VarDeclaration>();
-            ExpressionArray sizes;
-            sizes.reserve_back(decl.sizes().count());
-            for (const std::unique_ptr<Expression>& size : decl.sizes()) {
-                sizes.push_back(expr(size));
-            }
             std::unique_ptr<Expression> initialValue = expr(decl.value());
+            int arraySize = decl.arraySize();
             const Variable& old = decl.var();
             // We assign unique names to inlined variables--scopes hide most of the problems in this
             // regard, but see `InlinerAvoidsVariableNameOverlap` for a counterexample where unique
@@ -577,7 +559,7 @@ std::unique_ptr<Statement> Inliner::inlineStatement(int offset,
                                                old.storage(),
                                                initialValue.get()));
             (*varMap)[&old] = std::make_unique<VariableReference>(offset, clone);
-            return std::make_unique<VarDeclaration>(clone, baseTypePtr, std::move(sizes),
+            return std::make_unique<VarDeclaration>(clone, baseTypePtr, arraySize,
                                                     std::move(initialValue));
         }
         case Statement::Kind::kWhile: {
@@ -606,7 +588,6 @@ Inliner::InlinedCall Inliner::inlineCall(FunctionCall* call,
     SkASSERT(fContext);
     SkASSERT(call);
     SkASSERT(this->isSafeToInline(call->function().definition()));
-    SkASSERT(!symbolTableForCall->isBuiltin());
 
     ExpressionArray& arguments = call->arguments();
     const int offset = call->fOffset;
@@ -658,11 +639,11 @@ Inliner::InlinedCall Inliner::inlineCall(FunctionCall* call,
         // initial value).
         std::unique_ptr<Statement> variable;
         if (initialValue && (modifiers.fFlags & Modifiers::kOut_Flag)) {
-            variable = std::make_unique<VarDeclaration>(
-                    variableSymbol, type, /*sizes=*/ExpressionArray{}, (*initialValue)->clone());
+            variable = std::make_unique<VarDeclaration>(variableSymbol, type, /*arraySize=*/0,
+                                                        (*initialValue)->clone());
         } else {
-            variable = std::make_unique<VarDeclaration>(
-                    variableSymbol, type, /*sizes=*/ExpressionArray{}, std::move(*initialValue));
+            variable = std::make_unique<VarDeclaration>(variableSymbol, type, /*arraySize=*/0,
+                                                        std::move(*initialValue));
         }
 
         // Add the new variable-declaration statement to our block of extra statements.
@@ -689,7 +670,7 @@ Inliner::InlinedCall Inliner::inlineCall(FunctionCall* call,
         bool isOutParam = param->modifiers().fFlags & Modifiers::kOut_Flag;
 
         // If this argument can be inlined trivially (e.g. a swizzle, or a constant array index)...
-        if (is_trivial_argument(*arguments[i])) {
+        if (Analysis::IsTrivialExpression(*arguments[i])) {
             // ... and it's an `out` param, or it isn't written to within the inline function...
             if (isOutParam || !Analysis::StatementWritesToVariable(*function.body(), *param)) {
                 // ... we don't need to copy it at all! We can just use the existing expression.
@@ -802,7 +783,6 @@ struct InlineCandidate {
     std::unique_ptr<Statement>* fEnclosingStmt;   // the Statement containing the candidate
     std::unique_ptr<Expression>* fCandidateExpr;  // the candidate FunctionCall to be inlined
     FunctionDefinition* fEnclosingFunction;       // the Function containing the candidate
-    bool fIsLargeFunction;                        // does candidate exceed the inline threshold?
 };
 
 struct InlineCandidateList {
@@ -824,11 +804,13 @@ public:
     // The function that we're currently processing (i.e. inlining into).
     FunctionDefinition* fEnclosingFunction = nullptr;
 
-    void visit(Program& program, InlineCandidateList* candidateList) {
+    void visit(const std::vector<std::unique_ptr<ProgramElement>>& elements,
+               SymbolTable* symbols,
+               InlineCandidateList* candidateList) {
         fCandidateList = candidateList;
-        fSymbolTableStack.push_back(program.fSymbols.get());
+        fSymbolTableStack.push_back(symbols);
 
-        for (const auto& pe : program.elements()) {
+        for (const std::unique_ptr<ProgramElement>& pe : elements) {
             this->visitProgramElement(pe.get());
         }
 
@@ -840,12 +822,8 @@ public:
         switch (pe->kind()) {
             case ProgramElement::Kind::kFunction: {
                 FunctionDefinition& funcDef = pe->as<FunctionDefinition>();
-                // Don't attempt to mutate any builtin functions. (If we stop cloning builtins into
-                // the program, this check can become an assertion.)
-                if (!funcDef.isBuiltin()) {
-                    fEnclosingFunction = &funcDef;
-                    this->visitStatement(&funcDef.body());
-                }
+                fEnclosingFunction = &funcDef;
+                this->visitStatement(&funcDef.body());
                 break;
             }
             default:
@@ -1091,15 +1069,16 @@ public:
                                 find_parent_statement(fEnclosingStmtStack),
                                 fEnclosingStmtStack.back(),
                                 candidate,
-                                fEnclosingFunction,
-                                /*isLargeFunction=*/false});
+                                fEnclosingFunction});
     }
 };
 
-bool Inliner::candidateCanBeInlined(const InlineCandidate& candidate, InlinabilityCache* cache) {
-    const FunctionDeclaration& funcDecl =
-                                         (*candidate.fCandidateExpr)->as<FunctionCall>().function();
+static const FunctionDeclaration& candidate_func(const InlineCandidate& candidate) {
+    return (*candidate.fCandidateExpr)->as<FunctionCall>().function();
+}
 
+bool Inliner::candidateCanBeInlined(const InlineCandidate& candidate, InlinabilityCache* cache) {
+    const FunctionDeclaration& funcDecl = candidate_func(candidate);
     auto [iter, wasInserted] = cache->insert({&funcDecl, false});
     if (wasInserted) {
         // Recursion is forbidden here to avoid an infinite death spiral of inlining.
@@ -1110,32 +1089,32 @@ bool Inliner::candidateCanBeInlined(const InlineCandidate& candidate, Inlinabili
     return iter->second;
 }
 
-bool Inliner::isLargeFunction(const FunctionDefinition* functionDef) {
-    return Analysis::NodeCountExceeds(*functionDef, fSettings->fInlineThreshold);
-}
-
-bool Inliner::isLargeFunction(const InlineCandidate& candidate, LargeFunctionCache* cache) {
-    const FunctionDeclaration& funcDecl =
-                                         (*candidate.fCandidateExpr)->as<FunctionCall>().function();
-
-    auto [iter, wasInserted] = cache->insert({&funcDecl, false});
+int Inliner::getFunctionSize(const FunctionDeclaration& funcDecl, FunctionSizeCache* cache) {
+    auto [iter, wasInserted] = cache->insert({&funcDecl, 0});
     if (wasInserted) {
-        iter->second = this->isLargeFunction(funcDecl.definition());
+        iter->second = Analysis::NodeCountUpToLimit(*funcDecl.definition(),
+                                                    fSettings->fInlineThreshold);
     }
-
     return iter->second;
 }
 
-void Inliner::buildCandidateList(Program& program, InlineCandidateList* candidateList) {
+void Inliner::buildCandidateList(const std::vector<std::unique_ptr<ProgramElement>>& elements,
+                                 SymbolTable* symbols, ProgramUsage* usage,
+                                 InlineCandidateList* candidateList) {
     // This is structured much like a ProgramVisitor, but does not actually use ProgramVisitor.
     // The analyzer needs to keep track of the `unique_ptr<T>*` of statements and expressions so
     // that they can later be replaced, and ProgramVisitor does not provide this; it only provides a
     // `const T&`.
     InlineCandidateAnalyzer analyzer;
-    analyzer.visit(program, candidateList);
+    analyzer.visit(elements, symbols, candidateList);
+
+    // Early out if there are no inlining candidates.
+    std::vector<InlineCandidate>& candidates = candidateList->fCandidates;
+    if (candidates.empty()) {
+        return;
+    }
 
     // Remove candidates that are not safe to inline.
-    std::vector<InlineCandidate>& candidates = candidateList->fCandidates;
     InlinabilityCache cache;
     candidates.erase(std::remove_if(candidates.begin(),
                                     candidates.end(),
@@ -1144,16 +1123,48 @@ void Inliner::buildCandidateList(Program& program, InlineCandidateList* candidat
                                     }),
                      candidates.end());
 
-    // Determine whether each candidate function exceeds our inlining size threshold or not. These
-    // can still be valid candidates if they are only called one time, so we don't remove them from
-    // the candidate list, but they will not be inlined if they're called more than once.
-    LargeFunctionCache largeFunctionCache;
-    for (InlineCandidate& candidate : candidates) {
-        candidate.fIsLargeFunction = this->isLargeFunction(candidate, &largeFunctionCache);
+    // If the inline threshold is unlimited, or if we have no candidates left, our candidate list is
+    // complete.
+    if (fSettings->fInlineThreshold == INT_MAX || candidates.empty()) {
+        return;
     }
+
+    // Remove candidates on a per-function basis if the effect of inlining would be to make more
+    // than `inlineThreshold` nodes. (i.e. if Func() would be inlined six times and its size is
+    // 10 nodes, it should be inlined if the inlineThreshold is 60 or higher.)
+    FunctionSizeCache functionSizeCache;
+    FunctionSizeCache candidateTotalCost;
+    for (InlineCandidate& candidate : candidates) {
+        const FunctionDeclaration& fnDecl = candidate_func(candidate);
+        candidateTotalCost[&fnDecl] += this->getFunctionSize(fnDecl, &functionSizeCache);
+    }
+
+    candidates.erase(
+            std::remove_if(candidates.begin(),
+                           candidates.end(),
+                           [&](const InlineCandidate& candidate) {
+                               const FunctionDeclaration& fnDecl = candidate_func(candidate);
+                               if (fnDecl.modifiers().fFlags & Modifiers::kInline_Flag) {
+                                   // Functions marked `inline` ignore size limitations.
+                                   return false;
+                               }
+                               if (usage->get(fnDecl) == 1) {
+                                   // If a function is only used once, it's cost-free to inline.
+                                   return false;
+                               }
+                               if (candidateTotalCost[&fnDecl] <= fSettings->fInlineThreshold) {
+                                   // We won't exceed the inline threshold by inlining this.
+                                   return false;
+                               }
+                               // Inlining this function will add too many IRNodes.
+                               return true;
+                           }),
+            candidates.end());
 }
 
-bool Inliner::analyze(Program& program) {
+bool Inliner::analyze(const std::vector<std::unique_ptr<ProgramElement>>& elements,
+                      SymbolTable* symbols,
+                      ProgramUsage* usage) {
     // A threshold of zero indicates that the inliner is completely disabled, so we can just return.
     if (fSettings->fInlineThreshold <= 0) {
         return false;
@@ -1164,23 +1175,14 @@ bool Inliner::analyze(Program& program) {
         return false;
     }
 
-    ProgramUsage* usage = program.fUsage.get();
     InlineCandidateList candidateList;
-    this->buildCandidateList(program, &candidateList);
+    this->buildCandidateList(elements, symbols, usage, &candidateList);
 
     // Inline the candidates where we've determined that it's safe to do so.
     std::unordered_set<const std::unique_ptr<Statement>*> enclosingStmtSet;
     bool madeChanges = false;
     for (const InlineCandidate& candidate : candidateList.fCandidates) {
         FunctionCall& funcCall = (*candidate.fCandidateExpr)->as<FunctionCall>();
-        const FunctionDeclaration& funcDecl = funcCall.function();
-
-        // If the function is large, not marked `inline`, and is called more than once, it's a bad
-        // idea to inline it.
-        if (candidate.fIsLargeFunction &&
-            !(funcDecl.modifiers().fFlags & Modifiers::kInline_Flag) && usage->get(funcDecl) > 1) {
-            continue;
-        }
 
         // Inlining two expressions using the same enclosing statement in the same inlining pass
         // does not work properly. If this happens, skip it; we'll get it in the next pass.

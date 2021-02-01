@@ -30,6 +30,10 @@ class GrGLOpsRenderPass;
 class GrPipeline;
 class GrSwizzle;
 
+namespace SkSL {
+    class Compiler;
+}
+
 class GrGLGpu final : public GrGpu {
 public:
     static sk_sp<GrGpu> Make(sk_sp<const GrGLInterface>, const GrContextOptions&, GrDirectContext*);
@@ -104,7 +108,7 @@ public:
     // The GrGLOpsRenderPass does not buffer up draws before submitting them to the gpu.
     // Thus this is the implementation of the clear call for the corresponding passthrough function
     // on GrGLOpsRenderPass.
-    void clear(const GrScissorState&, const SkPMColor4f&, GrRenderTarget*, GrSurfaceOrigin);
+    void clear(const GrScissorState&, std::array<float, 4> color, GrRenderTarget*, GrSurfaceOrigin);
 
     // The GrGLOpsRenderPass does not buffer up draws before submitting them to the gpu.
     // Thus this is the implementation of the clearStencil call for the corresponding passthrough
@@ -192,6 +196,10 @@ public:
 
     // Version for programs that aren't GrGLProgram.
     void flushProgram(GrGLuint);
+
+    SkSL::Compiler* shaderCompiler() const {
+        return fCompiler.get();
+    }
 
 private:
     GrGLGpu(std::unique_ptr<GrGLContext>, GrDirectContext*);
@@ -389,7 +397,7 @@ private:
     void flushPatchVertexCount(uint8_t count);
 
     void flushColorWrite(bool writeColor);
-    void flushClearColor(const SkPMColor4f&);
+    void flushClearColor(std::array<float, 4>);
 
     // flushes the scissor. see the note on flushBoundTextureAndParams about
     // flushing the scissor after that function is called.
@@ -512,6 +520,8 @@ private:
 
     // GL program-related state
     std::unique_ptr<ProgramCache> fProgramCache;
+
+    std::unique_ptr<SkSL::Compiler> fCompiler;
 
     ///////////////////////////////////////////////////////////////////////////
     ///@name Caching of GL State
