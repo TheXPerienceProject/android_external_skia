@@ -23,8 +23,9 @@
   #define SK_SUPPORT_DEPRECATED_CLIPOPS
 
   // Staging flags
+  #define SK_SUPPORT_LEGACY_DRAWLOOPER
   #define SK_LEGACY_PATH_ARCTO_ENDPOINT
-
+  #define SK_SUPPORT_LEGACY_MATRIX_IMAGEFILTER
 
   // Needed until we fix https://bug.skia.org/2440
   #define SK_SUPPORT_LEGACY_CLIPTOLAYERFLAG
@@ -33,5 +34,8 @@
   #define SK_SUPPORT_LEGACY_AAA_CHOICE
 
   #define SK_DISABLE_DAA  // skbug.com/6886
+
+  // TODO(b/180114901): remove when fix in fastmmi
+  #define SK_SUPPORT_LEGACY_DRAWBITMAP
 
 #endif // SkUserConfigManual_DEFINED
