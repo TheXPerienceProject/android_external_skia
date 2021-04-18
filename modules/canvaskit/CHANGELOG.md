@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.1] - 2021-03-30
+
+### Added
+ - Skottie accessors for dynamic text properties (text string, font size).
+ - Optional sampling parameter to drawAtlas (paint filter-quality is ignored/deprecated)
+
+### Fixed
+ - Fonts should not be leaked https://bugs.chromium.org/p/skia/issues/detail?id=11778
+
+## [0.25.0] - 2021-03-02
+
+### Added
+ - A full build of CanvasKit is now in /bin/full.
+ - `CanvasKit.rt_effect` to test if the RuntimeEffect code was compiled in.
+
+### Breaking
+ - The `ShapedText` type has been removed. Clients who want ShapedText should use the
+   Paragraph APIs.
+
+### Removed
+ - `Font.measureText`, which had been previously deprecated. Clients should use either
+   Paragraph APIs or `Font.getGlyphWidths` instead (the latter does no shaping).
+ - `Font.getWidths`, which had been previously deprecated. Clients should use `Font.getGlyphWidths`.
+
+### Type Changes (index.d.ts)
+ - Documentation added for `managed_skottie`, `particles`, and `skottie` feature constants.
+
 ## [0.24.0] - 2021-02-18
 
 ### Added

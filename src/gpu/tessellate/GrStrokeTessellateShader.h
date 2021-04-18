@@ -11,6 +11,7 @@
 #include "src/gpu/tessellate/GrPathShader.h"
 
 #include "include/core/SkStrokeRec.h"
+#include "src/gpu/GrVx.h"
 #include "src/gpu/tessellate/GrTessellationPathRenderer.h"
 #include <array>
 
@@ -65,53 +66,6 @@ public:
         }
         SkUNREACHABLE;
     }
-
-    // These tolerances decide the number of parametric and radial segments the tessellator will
-    // linearize curves into. These decisions are made in (pre-viewMatrix) local path space.
-    struct Tolerances {
-        // See fParametricIntolerance.
-        constexpr static float CalcParametricIntolerance(float matrixMaxScale) {
-            return matrixMaxScale * GrTessellationPathRenderer::kLinearizationIntolerance;
-        }
-        // Returns the equivalent tolerances in (pre-viewMatrix) local path space that the
-        // tessellator will use when rendering this stroke.
-        static Tolerances MakePreTransform(const float matrixMinMaxScales[2], float strokeWidth) {
-            float matrixMaxScale = matrixMinMaxScales[1];
-            float localStrokeWidth = strokeWidth;
-            if (localStrokeWidth == 0) {
-                float matrixMinScale = matrixMinMaxScales[0];
-                // If the stroke is hairline then the tessellator will operate in post-transform
-                // space instead. But for the sake of CPU methods that need to conservatively
-                // approximate the number of segments to emit, we use
-                // localStrokeWidth ~= 1/matrixMinScale.
-                float approxScale = matrixMinScale;
-                // If the matrix has strong skew, don't let the scale shoot off to infinity. (This
-                // does not affect the tessellator; only the CPU methods that approximate the number
-                // of segments to emit.)
-                approxScale = std::max(matrixMinScale, matrixMaxScale * .25f);
-                localStrokeWidth = 1/approxScale;
-            }
-            return GrStrokeTessellateShader::Tolerances(matrixMaxScale, localStrokeWidth);
-        }
-        Tolerances() = default;
-        Tolerances(float matrixMaxScale, float strokeWidth) {
-            this->set(matrixMaxScale, strokeWidth);
-        }
-        void set(float matrixMaxScale, float strokeWidth) {
-            fParametricIntolerance = CalcParametricIntolerance(matrixMaxScale);
-            fNumRadialSegmentsPerRadian =
-                    .5f / acosf(std::max(1 - 2/(fParametricIntolerance * strokeWidth), -1.f));
-        }
-        // Decides the number of parametric segments the tessellator adds for each curve. (Uniform
-        // steps in parametric space.) The tessellator will add enough parametric segments so that,
-        // once transformed into device space, they never deviate by more than
-        // 1/GrTessellationPathRenderer::kLinearizationIntolerance pixels from the true curve.
-        float fParametricIntolerance;
-        // Decides the number of radial segments the tessellator adds for each curve. (Uniform steps
-        // in tangent angle.) The tessellator will add this number of radial segments for each
-        // radian of rotation in local path space.
-        float fNumRadialSegmentsPerRadian;
-    };
 
     // We encode all of a join's information in a single float value:
     //
@@ -237,13 +191,13 @@ public:
 private:
     const char* name() const override { return "GrStrokeTessellateShader"; }
     void getGLSLProcessorKey(const GrShaderCaps&, GrProcessorKeyBuilder* b) const override;
-    GrGLSLPrimitiveProcessor* createGLSLInstance(const GrShaderCaps&) const final;
+    GrGLSLGeometryProcessor* createGLSLInstance(const GrShaderCaps&) const final;
 
-    SkString getTessControlShaderGLSL(const GrGLSLPrimitiveProcessor*,
+    SkString getTessControlShaderGLSL(const GrGLSLGeometryProcessor*,
                                       const char* versionAndExtensionDecls,
                                       const GrGLSLUniformHandler&,
                                       const GrShaderCaps&) const override;
-    SkString getTessEvaluationShaderGLSL(const GrGLSLPrimitiveProcessor*,
+    SkString getTessEvaluationShaderGLSL(const GrGLSLGeometryProcessor*,
                                          const char* versionAndExtensionDecls,
                                          const GrGLSLUniformHandler&,
                                          const GrShaderCaps&) const override;

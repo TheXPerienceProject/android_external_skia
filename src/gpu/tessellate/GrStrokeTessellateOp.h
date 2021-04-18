@@ -9,42 +9,11 @@
 #define GrStrokeTessellateOp_DEFINED
 
 #include "include/core/SkStrokeRec.h"
-#include "src/gpu/GrSTArenaList.h"
 #include "src/gpu/ops/GrMeshDrawOp.h"
 #include "src/gpu/tessellate/GrPathShader.h"
-#include "src/gpu/tessellate/GrStrokeTessellateShader.h"
+#include "src/gpu/tessellate/GrStrokeTessellator.h"
 
 class GrRecordingContext;
-
-// Prepares GPU data for, and then draws a stroke's tessellated geometry.
-class GrStrokeTessellator {
-public:
-    using ShaderFlags = GrStrokeTessellateShader::ShaderFlags;
-
-    struct PathStroke {
-        PathStroke(const SkPath& path, const SkStrokeRec& stroke, const SkPMColor4f& color)
-                : fPath(path), fStroke(stroke), fColor(color) {}
-        SkPath fPath;
-        SkStrokeRec fStroke;
-        SkPMColor4f fColor;
-    };
-
-    GrStrokeTessellator(ShaderFlags shaderFlags, GrSTArenaList<PathStroke>&& pathStrokeList)
-            : fShaderFlags(shaderFlags), fPathStrokeList(std::move(pathStrokeList)) {}
-
-    // Called before draw(). Prepares GPU buffers containing the geometry to tessellate.
-    virtual void prepare(GrMeshDrawOp::Target*, const SkMatrix&) = 0;
-
-    // Issues draw calls for the tessellated stroke. The caller is responsible for binding its
-    // desired pipeline ahead of time.
-    virtual void draw(GrOpFlushState*) const = 0;
-
-    virtual ~GrStrokeTessellator() {}
-
-protected:
-    const ShaderFlags fShaderFlags;
-    const GrSTArenaList<PathStroke> fPathStrokeList;
-};
 
 // Renders strokes by linearizing them into sorted "parametric" and "radial" edges. See
 // GrStrokeTessellateShader.
@@ -54,11 +23,11 @@ public:
 
 private:
     using ShaderFlags = GrStrokeTessellateShader::ShaderFlags;
-    using PathStroke = GrStrokeTessellator::PathStroke;
+    using PathStrokeList = GrStrokeTessellator::PathStrokeList;
     DEFINE_OP_CLASS_ID
 
-    SkStrokeRec& headStroke() { return fPathStrokeList.head().fStroke; }
-    SkPMColor4f& headColor() { return fPathStrokeList.head().fColor; }
+    SkStrokeRec& headStroke() { return fPathStrokeList.fStroke; }
+    SkPMColor4f& headColor() { return fPathStrokeList.fColor; }
     GrStrokeTessellateOp* nextInChain() const {
         return static_cast<GrStrokeTessellateOp*>(this->GrDrawOp::nextInChain());
     }
@@ -103,7 +72,8 @@ private:
     const GrAAType fAAType;
     const SkMatrix fViewMatrix;
     ShaderFlags fShaderFlags = ShaderFlags::kNone;
-    GrSTArenaList<PathStroke> fPathStrokeList;
+    PathStrokeList fPathStrokeList;
+    PathStrokeList** fPathStrokeTail = &fPathStrokeList.fNext;
     int fTotalCombinedVerbCnt = 0;
     GrProcessorSet fProcessors;
     bool fNeedsStencil = false;

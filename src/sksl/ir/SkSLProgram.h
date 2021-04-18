@@ -11,16 +11,16 @@
 #include <vector>
 #include <memory>
 
+#include "include/private/SkSLDefines.h"
+#include "include/private/SkSLModifiers.h"
+#include "include/private/SkSLProgramElement.h"
 #include "include/private/SkTHash.h"
 #include "src/sksl/SkSLAnalysis.h"
-#include "src/sksl/SkSLDefines.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/ir/SkSLBoolLiteral.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLFloatLiteral.h"
 #include "src/sksl/ir/SkSLIntLiteral.h"
-#include "src/sksl/ir/SkSLModifiers.h"
-#include "src/sksl/ir/SkSLProgramElement.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 
 #ifdef SK_VULKAN
@@ -43,7 +43,11 @@ class Pool;
  */
 class ProgramUsage {
 public:
-    struct VariableCounts { int fRead = 0; int fWrite = 0; };
+    struct VariableCounts {
+        int fDeclared = 0;
+        int fRead = 0;
+        int fWrite = 0;
+    };
     VariableCounts get(const Variable&) const;
     bool isDead(const Variable&) const;
 
@@ -89,7 +93,6 @@ struct Program {
 
     Program(std::unique_ptr<String> source,
             std::unique_ptr<ProgramConfig> config,
-            const ShaderCapsClass* caps,
             std::shared_ptr<Context> context,
             std::vector<std::unique_ptr<ProgramElement>> elements,
             std::vector<const ProgramElement*> sharedElements,
@@ -99,7 +102,6 @@ struct Program {
             Inputs inputs)
     : fSource(std::move(source))
     , fConfig(std::move(config))
-    , fCaps(caps)
     , fContext(context)
     , fSymbols(symbols)
     , fPool(std::move(pool))
@@ -193,11 +195,11 @@ struct Program {
 
     // Can be used to iterate over *just* the elements owned by the Program, not shared builtins.
     // The iterator's value type is 'std::unique_ptr<ProgramElement>', and mutation is allowed.
+    std::vector<std::unique_ptr<ProgramElement>>& ownedElements() { return fElements; }
     const std::vector<std::unique_ptr<ProgramElement>>& ownedElements() const { return fElements; }
 
     std::unique_ptr<String> fSource;
     std::unique_ptr<ProgramConfig> fConfig;
-    const ShaderCapsClass* fCaps;
     std::shared_ptr<Context> fContext;
     // it's important to keep fElements defined after (and thus destroyed before) fSymbols,
     // because destroying elements can modify reference counts in symbols

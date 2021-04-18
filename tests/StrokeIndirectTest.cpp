@@ -41,9 +41,10 @@ static void test_stroke(skiatest::Reporter* r, GrDirectContext* ctx, GrMockOpTar
         for (int i = 0; i < 16; ++i) {
             float scale = ldexpf(rand.nextF() + 1, i);
             auto matrix = SkMatrix::Scale(scale, scale);
+            GrStrokeTessellator::PathStrokeList pathStrokeList(path, stroke, SK_PMColor4fWHITE);
             GrStrokeIndirectTessellator tessellator(GrStrokeTessellateShader::ShaderFlags::kNone,
-                                                    matrix, {path, stroke, SK_PMColor4fWHITE},
-                                                    path.countVerbs(), target->allocator());
+                                                    matrix, &pathStrokeList, path.countVerbs(),
+                                                    target->allocator());
             tessellator.verifyResolveLevels(r, target, matrix, path, stroke);
             tessellator.prepare(target, matrix);
             tessellator.verifyBuffers(r, target, matrix, stroke);
@@ -269,7 +270,8 @@ void GrStrokeIndirectTessellator::verifyResolveLevels(skiatest::Reporter* r,
                                                       const SkMatrix& viewMatrix,
                                                       const SkPath& path,
                                                       const SkStrokeRec& stroke) {
-    GrStrokeTessellateShader::Tolerances tolerances(viewMatrix.getMaxScale(), stroke.getWidth());
+    auto tolerances = GrStrokeTolerances::MakeNonHairline(viewMatrix.getMaxScale(),
+                                                          stroke.getWidth());
     int8_t resolveLevelForCircles = SkTPin<float>(
             sk_float_nextlog2(tolerances.fNumRadialSegmentsPerRadian * SK_ScalarPI),
             1, kMaxResolveLevel);
@@ -438,7 +440,8 @@ void GrStrokeIndirectTessellator::verifyBuffers(skiatest::Reporter* r, GrMockOpT
     };
     auto instance = static_cast<const IndirectInstance*>(target->peekStaticVertexData());
     auto* indirect = static_cast<const GrDrawIndirectCommand*>(target->peekStaticIndirectData());
-    GrStrokeTessellateShader::Tolerances tolerances(viewMatrix.getMaxScale(), stroke.getWidth());
+    auto tolerances = GrStrokeTolerances::MakeNonHairline(viewMatrix.getMaxScale(),
+                                                          stroke.getWidth());
     float tolerance = test_tolerance(stroke.getJoin());
     for (int i = 0; i < fChainedDrawIndirectCount; ++i) {
         int numExtraEdgesInJoin = (stroke.getJoin() == SkPaint::kMiter_Join) ? 4 : 3;

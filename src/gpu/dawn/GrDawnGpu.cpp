@@ -21,6 +21,7 @@
 #include "src/gpu/GrSemaphore.h"
 #include "src/gpu/GrStencilSettings.h"
 #include "src/gpu/GrTexture.h"
+#include "src/gpu/GrThreadSafePipelineBuilder.h"
 #include "src/gpu/dawn/GrDawnAttachment.h"
 #include "src/gpu/dawn/GrDawnBuffer.h"
 #include "src/gpu/dawn/GrDawnCaps.h"
@@ -143,6 +144,14 @@ void GrDawnGpu::disconnect(DisconnectType type) {
     fQueue = nullptr;
     fDevice = nullptr;
     INHERITED::disconnect(type);
+}
+
+GrThreadSafePipelineBuilder* GrDawnGpu::pipelineBuilder() {
+    return nullptr;
+}
+
+sk_sp<GrThreadSafePipelineBuilder> GrDawnGpu::refPipelineBuilder() {
+    return nullptr;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -320,7 +329,7 @@ GrBackendTexture GrDawnGpu::onCreateBackendTexture(SkISize dimensions,
 
     desc.size.width = dimensions.width();
     desc.size.height = dimensions.height();
-    desc.size.depth = 1;
+    desc.size.depthOrArrayLayers = 1;
     desc.format = format;
     desc.mipLevelCount = numMipLevels;
 
@@ -501,7 +510,7 @@ GrBackendRenderTarget GrDawnGpu::createTestingOnlyBackendRenderTarget(SkISize di
 
     desc.size.width = dimensions.width();
     desc.size.height = dimensions.height();
-    desc.size.depth = 1;
+    desc.size.depthOrArrayLayers = 1;
     desc.format = format;
 
     wgpu::Texture tex = this->device().CreateTexture(&desc);
@@ -684,7 +693,7 @@ bool GrDawnGpu::onRegenerateMipMapLevels(GrTexture* tex) {
                     wgpu::TextureUsage::OutputAttachment;
     texDesc.size.width = (tex->width() + 1) / 2;
     texDesc.size.height = (tex->height() + 1) / 2;
-    texDesc.size.depth = 1;
+    texDesc.size.depthOrArrayLayers = 1;
     texDesc.mipLevelCount = levelCount - 1;
     texDesc.format = src->format();
     wgpu::Texture dstTexture = fDevice.CreateTexture(&texDesc);
