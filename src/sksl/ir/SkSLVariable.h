@@ -11,6 +11,7 @@
 #include "include/private/SkSLModifiers.h"
 #include "include/private/SkSLSymbol.h"
 #include "src/sksl/SkSLPosition.h"
+#include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
 
@@ -21,6 +22,7 @@ class VarDeclaration;
 
 namespace dsl {
 class DSLCore;
+class DSLFunction;
 } // namespace dsl
 
 enum class VariableStorage : int8_t {
@@ -88,6 +90,7 @@ private:
     using INHERITED = Symbol;
 
     friend class dsl::DSLCore;
+    friend class dsl::DSLFunction;
     friend class VariableReference;
 };
 

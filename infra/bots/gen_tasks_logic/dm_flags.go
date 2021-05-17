@@ -152,10 +152,6 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		args = append(args, "--randomProcessorTest")
 	}
 
-	if b.model("Pixel3", "Pixel3a") && b.extraConfig("Vulkan") {
-		args = append(args, "--dontReduceOpsTaskSplitting")
-	}
-
 	threadLimit := -1
 	const MAIN_THREAD_ONLY = 0
 
@@ -214,14 +210,12 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		args = append(args, "--nocpu")
 
 		// Add in either gles or gl configs to the canonical set based on OS
-		sampleCount = 8
 		glPrefix = "gl"
+		// Use 4x MSAA for all our testing. It's more consistent and 8x MSAA is nondeterministic (by
+		// design) on NVIDIA hardware. The problem is especially bad on ANGLE.  skia:6813 skia:6545
+		sampleCount = 4
 		if b.os("Android", "iOS") {
-			sampleCount = 4
-			// We want to test the OpenGL config not the GLES config on the Shield
-			if !b.model("NVIDIA_Shield") {
-				glPrefix = "gles"
-			}
+			glPrefix = "gles"
 			// MSAA is disabled on Pixel3a (https://b.corp.google.com/issues/143074513).
 			if b.model("Pixel3a") {
 				sampleCount = 0
@@ -229,11 +223,6 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		} else if b.matchGpu("Intel") {
 			// MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926
 			sampleCount = 0
-		} else if b.matchGpu("GTX", "Quadro") && b.extraConfig("ANGLE") {
-			// 8x MSAA is nondeterministic (by design) on NVIDIA hardware.
-			// The problem is especially bad on ANGLE, so use 4x instead.
-			// skia:6813 skia:6545
-			sampleCount = 4
 		} else if b.os("ChromeOS") {
 			glPrefix = "gles"
 		}
@@ -319,12 +308,6 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			}
 		}
 
-		if b.model("Pixelbook") {
-			// skbug.com/10232
-			skip("_ test _ ProcessorCloneTest")
-
-		}
-
 		if b.model("AndroidOne", "GalaxyS6", "Nexus5", "Nexus7") {
 			// skbug.com/9019
 			skip("_ test _ ProcessorCloneTest")
@@ -347,13 +330,6 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			skip("_ test _ GLBackendAllocationTest")
 		}
 
-		// skbug.com/9033 - these devices run out of memory on this test
-		// when opList splitting reduction is enabled
-		if b.gpu() && (b.model("Nexus7", "NVIDIA_Shield", "Nexus5x") ||
-			(b.os("Win10") && b.gpu("GTX660") && b.extraConfig("Vulkan"))) {
-			skip("_", "gm", "_", "savelayer_clipmask")
-		}
-
 		// skbug.com/9043 - these devices render this test incorrectly
 		// when opList splitting reduction is enabled
 		if b.gpu() && b.extraConfig("Vulkan") && (b.gpu("RadeonR9M470X", "RadeonHD7770")) {
@@ -361,24 +337,16 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		}
 		if b.extraConfig("Vulkan") {
 			configs = []string{"vk"}
-			if b.os("Android") {
+			// MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926, skia:9023
+			if !b.matchGpu("Intel") {
 				configs = append(configs, "vkmsaa4")
-			} else {
-				// MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926, skia:9023
-				if !b.matchGpu("Intel") {
-					configs = append(configs, "vkmsaa8")
-				}
 			}
 		}
 		if b.extraConfig("Metal") {
 			configs = []string{"mtl"}
-			if b.os("iOS") {
+			// MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926
+			if !b.matchGpu("Intel") {
 				configs = append(configs, "mtlmsaa4")
-			} else {
-				// MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926
-				if !b.matchGpu("Intel") {
-					configs = append(configs, "mtlmsaa8")
-				}
 			}
 		}
 		if b.extraConfig("Direct3D") {
@@ -443,15 +411,28 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			skip("mtltestprecompile svg _ Chalkboard.svg")
 			skip("mtltestprecompile svg _ Ghostscript_Tiger.svg")
 		}
+		// Test reduced shader mode on iPhone 11 as representative iOS device
+		if b.model("iPhone11") && b.extraConfig("Metal") {
+			configs = append(configs, "mtlreducedshaders")
+		}
 
-		if b.model(REDUCE_OPS_TASK_SPLITTING_MODELS...) {
-			args = append(args, "--reduceOpsTaskSplitting", "true")
+		if b.gpu("AppleM1") && !b.extraConfig("Metal") {
+			skip("_ test _ TransferPixelsFromTextureTest") // skia:11814
+		}
+
+		if b.model(DONT_REDUCE_OPS_TASK_SPLITTING_MODELS...) {
+			args = append(args, "--dontReduceOpsTaskSplitting", "true")
+		}
+
+		// Test reduceOpsTaskSplitting fallback when over budget.
+		if b.model("NUC7i5BNK") && b.extraConfig("ASAN") {
+			args = append(args, "--gpuResourceCacheLimit", "16777216")
 		}
 
 		// Test rendering to wrapped dsts on a few bots
 		// Also test "glenarrow", which hits F16 surfaces and F16 vertex colors.
 		if b.extraConfig("BonusConfigs") {
-			configs = []string{"glbetex", "glbert", "glenarrow"}
+			configs = []string{"glbetex", "glbert", "glenarrow", "glreducedshaders"}
 		}
 
 		if b.os("ChromeOS") {
@@ -468,7 +449,10 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		// Test dynamic MSAA.
 		if b.extraConfig("DMSAA") {
 			configs = []string{glPrefix + "dmsaa"}
-			args = append(args, "--hwtess")
+			if !b.os("Android") {
+				// Also enable hardware tessellation if not on android.
+				args = append(args, "--hwtess")
+			}
 		}
 
 		// DDL is a GPU-only feature
@@ -853,8 +837,9 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		}
 	}
 
-	if b.matchGpu("Adreno[56][0-9][0-9]") { // skia:11308 - disable on Adreno 5xx/6xx
+	if b.matchGpu("Adreno[456][0-9][0-9]") { // skia:11308, skia:11891 - disable on Adreno 4/5/6xx
 		skip("_", "tests", "_", "SkSLMatrixEquality_GPU")
+		skip("_", "tests", "_", "DSLFPTest_SwitchStatement")
 	}
 
 	match := []string{}
@@ -950,6 +935,11 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		match = append(match, "~SurfacePartialDraw_Gpu")
 	}
 
+	if b.extraConfig("Metal") && b.gpu("PowerVRGX6450") && b.matchOs("iOS") {
+		// skbug.com/11885
+		match = append(match, "~flight_animated_image")
+	}
+
 	if b.extraConfig("Direct3D") {
 		// skia:9935
 		match = append(match, "~^DDLSkSurfaceFlush$")
@@ -976,10 +966,6 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 	if b.gpu("PowerVRGX6250") {
 		match = append(match, "~gradients_view_perspective_nodither") //skia:6972
-	}
-
-	if b.matchOs("iOS") && b.extraConfig("Metal") {
-		match = append(match, "~^SurfaceContextWritePixels$") //skia:11130
 	}
 
 	if b.arch("arm") && b.extraConfig("ASAN") {

@@ -96,7 +96,7 @@ bool SkSLSlide::rebuild() {
         fwrite(fSkSL.c_str(), 1, fSkSL.size(), backup);
         fclose(backup);
     }
-    auto [effect, errorText] = SkRuntimeEffect::Make(sksl);
+    auto [effect, errorText] = SkRuntimeEffect::MakeForShader(sksl);
     if (backup) {
         std::remove(kBackupFile);
     }
@@ -196,6 +196,21 @@ void SkSLSlide::draw(SkCanvas* canvas) {
                             : SkStringPrintf("%s[%d]", v.name.c_str(), c);
                         ImGui::DragScalarN(name.c_str(), ImGuiDataType_Float, f, rows, 1.0f);
                     }
+                }
+                break;
+            }
+            case SkRuntimeEffect::Uniform::Type::kInt:
+            case SkRuntimeEffect::Uniform::Type::kInt2:
+            case SkRuntimeEffect::Uniform::Type::kInt3:
+            case SkRuntimeEffect::Uniform::Type::kInt4: {
+                int rows = ((int)v.type - (int)SkRuntimeEffect::Uniform::Type::kInt) + 1;
+                int* i = reinterpret_cast<int*>(data);
+                for (int c = 0; c < v.count; ++c, i += rows) {
+                    SkString name = v.isArray() ? SkStringPrintf("%s[%d]", v.name.c_str(), c)
+                                                : v.name;
+                    ImGui::PushID(c);
+                    ImGui::DragScalarN(name.c_str(), ImGuiDataType_S32, i, rows, 1.0f);
+                    ImGui::PopID();
                 }
                 break;
             }

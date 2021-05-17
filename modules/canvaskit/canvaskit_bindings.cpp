@@ -631,23 +631,50 @@ struct RuntimeEffectUniform {
     int columns;
     int rows;
     int slot; // the index into the uniforms array that this uniform begins.
+    bool isInteger;
 };
 
 RuntimeEffectUniform fromUniform(const SkRuntimeEffect::Uniform& u) {
     RuntimeEffectUniform su;
-    su.rows    = u.count;  // arrayLength
-    su.columns = 1;
+    su.rows      = u.count;  // arrayLength
+    su.columns   = 1;
+    su.isInteger = false;
+    using Type = SkRuntimeEffect::Uniform::Type;
     switch (u.type) {
-        case SkRuntimeEffect::Uniform::Type::kFloat:                                  break;
-        case SkRuntimeEffect::Uniform::Type::kFloat2:   su.columns = 2;               break;
-        case SkRuntimeEffect::Uniform::Type::kFloat3:   su.columns = 3;               break;
-        case SkRuntimeEffect::Uniform::Type::kFloat4:   su.columns = 4;               break;
-        case SkRuntimeEffect::Uniform::Type::kFloat2x2: su.columns = 2; su.rows *= 2; break;
-        case SkRuntimeEffect::Uniform::Type::kFloat3x3: su.columns = 3; su.rows *= 3; break;
-        case SkRuntimeEffect::Uniform::Type::kFloat4x4: su.columns = 4; su.rows *= 4; break;
+        case Type::kFloat:                                                       break;
+        case Type::kFloat2:   su.columns = 2;                                    break;
+        case Type::kFloat3:   su.columns = 3;                                    break;
+        case Type::kFloat4:   su.columns = 4;                                    break;
+        case Type::kFloat2x2: su.columns = 2; su.rows *= 2;                      break;
+        case Type::kFloat3x3: su.columns = 3; su.rows *= 3;                      break;
+        case Type::kFloat4x4: su.columns = 4; su.rows *= 4;                      break;
+        case Type::kInt:                                    su.isInteger = true; break;
+        case Type::kInt2:     su.columns = 2;               su.isInteger = true; break;
+        case Type::kInt3:     su.columns = 3;               su.isInteger = true; break;
+        case Type::kInt4:     su.columns = 4;               su.isInteger = true; break;
     }
     su.slot = u.offset / sizeof(float);
     return su;
+}
+
+void castUniforms(void* data, size_t dataLen, const SkRuntimeEffect& effect) {
+    if (dataLen != effect.uniformSize()) {
+        // Incorrect number of uniforms. Our code below could read/write off the end of the buffer.
+        // However, shader creation is going to fail anyway, so just do nothing.
+        return;
+    }
+
+    float* fltData = reinterpret_cast<float*>(data);
+    for (const auto& u : effect.uniforms()) {
+        RuntimeEffectUniform reu = fromUniform(u);
+        if (reu.isInteger) {
+            // The SkSL is expecting integers in the uniform data
+            for (int i = 0; i < reu.columns * reu.rows; ++i) {
+                int numAsInt = static_cast<int>(fltData[reu.slot + i]);
+                fltData[reu.slot + i] = SkBits2Float(numAsInt);
+            }
+        }
+    }
 }
 #endif
 
@@ -884,6 +911,18 @@ EMSCRIPTEN_BINDINGS(Skia) {
                                                      uintptr_t /* float* */ innerPtr, const SkPaint& paint) {
             self.drawDRRect(ptrToSkRRect(outerPtr), ptrToSkRRect(innerPtr), paint);
         }))
+        .function("_drawGlyphs", optional_override([](SkCanvas& self,
+                                                      int count,
+                                                      uintptr_t /* uint16_t* */ glyphs,
+                                                      uintptr_t /* SkPoint*  */ positions,
+                                                      float x, float y,
+                                                      const SkFont& font,
+                                                      const SkPaint& paint)->void {
+            self.drawGlyphs(count,
+                            reinterpret_cast<const uint16_t*>(glyphs),
+                            reinterpret_cast<const SkPoint*>(positions),
+                            {x, y}, font, paint);
+        }))
         // TODO: deprecate this version, and require sampling
         .function("drawImage", optional_override([](SkCanvas& self, const sk_sp<SkImage>& image,
                                                     SkScalar x, SkScalar y, const SkPaint* paint) {
@@ -963,6 +1002,17 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }), allow_raw_pointers())
 #endif
         .function("drawPath", &SkCanvas::drawPath)
+        .function("_drawPatch", optional_override([](SkCanvas& self,
+                                                     uintptr_t /* SkPoint* */ cubics,
+                                                     uintptr_t /* SkColor* */ colors,
+                                                     uintptr_t /* SkPoint* */ texs,
+                                                     SkBlendMode mode,
+                                                     const SkPaint& paint)->void {
+            self.drawPatch(reinterpret_cast<const SkPoint*>(cubics),
+                           reinterpret_cast<const SkColor*>(colors),
+                           reinterpret_cast<const SkPoint*>(texs),
+                           mode, paint);
+        }))
         // Of note, picture is *not* what is colloquially thought of as a "picture", what we call
         // a bitmap. An SkPicture is a series of draw commands.
         .function("drawPicture", select_overload<void (const sk_sp<SkPicture>&)>(&SkCanvas::drawPicture))
@@ -1152,6 +1202,22 @@ EMSCRIPTEN_BINDINGS(Skia) {
             int actualCodePoints = self.textToGlyphs(str, strLen, SkTextEncoding::kUTF8,
                                                      glyphIDs, expectedCodePoints);
             return actualCodePoints;
+        }))
+        .function("getMetrics", optional_override([](SkFont& self) -> JSObject {
+            SkFontMetrics fm;
+            self.getMetrics(&fm);
+
+            JSObject j = emscripten::val::object();
+            j.set("ascent",  fm.fAscent);
+            j.set("descent", fm.fDescent);
+            j.set("leading", fm.fLeading);
+            if (!(fm.fFlags & SkFontMetrics::kBoundsInvalid_Flag)) {
+                const float rect[] = {
+                    fm.fXMin, fm.fTop, fm.fXMax, fm.fBottom
+                };
+                j.set("bounds", MakeTypedArray(4, rect, "Float32Array"));
+            }
+            return j;
         }))
         .function("getScaleX", &SkFont::getScaleX)
         .function("getSize", &SkFont::getSize)
@@ -1642,7 +1708,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
                                                      emscripten::val errHandler
                                                     )->sk_sp<SkRuntimeEffect> {
             SkString s(sksl.c_str(), sksl.length());
-            auto [effect, errorText] = SkRuntimeEffect::Make(s);
+            auto [effect, errorText] = SkRuntimeEffect::MakeForShader(s);
             if (!effect) {
                 errHandler.call<void>("onError", val(errorText.c_str()));
                 return nullptr;
@@ -1652,6 +1718,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("_makeShader", optional_override([](SkRuntimeEffect& self, uintptr_t fPtr, size_t fLen, bool isOpaque,
                                                       uintptr_t /* SkScalar*  */ mPtr)->sk_sp<SkShader> {
             void* inputData = reinterpret_cast<void*>(fPtr);
+            castUniforms(inputData, fLen, self);
             sk_sp<SkData> inputs = SkData::MakeFromMalloc(inputData, fLen);
 
             OptionalMatrix localMatrix(mPtr);
@@ -1661,6 +1728,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
                                                                   uintptr_t /** SkShader*[] */cPtrs, size_t cLen,
                                                                   uintptr_t /* SkScalar*  */ mPtr)->sk_sp<SkShader> {
             void* inputData = reinterpret_cast<void*>(fPtr);
+            castUniforms(inputData, fLen, self);
             sk_sp<SkData> inputs = SkData::MakeFromMalloc(inputData, fLen);
 
             sk_sp<SkShader>* children = new sk_sp<SkShader>[cLen];
@@ -1692,9 +1760,10 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }));
 
     value_object<RuntimeEffectUniform>("RuntimeEffectUniform")
-        .field("columns", &RuntimeEffectUniform::columns)
-        .field("rows",    &RuntimeEffectUniform::rows)
-        .field("slot",    &RuntimeEffectUniform::slot);
+        .field("columns",   &RuntimeEffectUniform::columns)
+        .field("rows",      &RuntimeEffectUniform::rows)
+        .field("slot",      &RuntimeEffectUniform::slot)
+        .field("isInteger", &RuntimeEffectUniform::isInteger);
 
     constant("rt_effect", true);
 #endif

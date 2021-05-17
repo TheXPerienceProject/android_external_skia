@@ -69,6 +69,9 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 
 		configs = append(configs, glPrefix, glPrefix+"srgb")
 
+		if b.os("Ubuntu18") && b.noExtraConfig() {
+			configs = append(configs, glPrefix+"reducedshaders")
+		}
 		// glnarrow/glesnarrow tests the case of color converting *all* content
 		// It hangs on the AndroidOne (Mali400)  skia:10669
 		if (!b.gpu("Mali400MP2")) {
@@ -119,6 +122,9 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 			} else {
 				configs = append(configs, "mtlmsaa8")
 			}
+			if b.model("iPhone11") {
+				configs = append(configs, "mtlreducedshaders")
+			}
 		}
 
 		if b.extraConfig("ANGLE") {
@@ -158,11 +164,6 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 		args = append(args, "--samples", "1")
 		// Ensure that the bot framework does not think we have timed out.
 		args = append(args, "--keepAlive", "true")
-	}
-
-	// skia:9036
-	if b.model("NVIDIA_Shield") {
-		args = append(args, "--dontReduceOpsTaskSplitting")
 	}
 
 	// Some people don't like verbose output.
@@ -245,8 +246,11 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 		match = append(match, "~path")
 	}
 
-	if b.model(REDUCE_OPS_TASK_SPLITTING_MODELS...) {
-		args = append(args, "--reduceOpsTaskSplitting", "true")
+	if b.model(DONT_REDUCE_OPS_TASK_SPLITTING_MODELS...) {
+		args = append(args, "--dontReduceOpsTaskSplitting", "true")
+	}
+	if b.model("NUC7i5BNK") {
+		args = append(args, "--gpuResourceCacheLimit", "16777216")
 	}
 
 	// We do not need or want to benchmark the decodes of incomplete images.

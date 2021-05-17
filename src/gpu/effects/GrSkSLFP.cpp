@@ -13,8 +13,8 @@
 #include "src/gpu/GrBaseContextPriv.h"
 #include "src/gpu/GrColorInfo.h"
 #include "src/gpu/GrTexture.h"
-#include "src/sksl/SkSLPipelineStageCodeGenerator.h"
 #include "src/sksl/SkSLUtil.h"
+#include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
@@ -37,17 +37,25 @@ public:
 
         class FPCallbacks : public SkSL::PipelineStage::Callbacks {
         public:
-            FPCallbacks(GrGLSLSkSLFP* self, EmitArgs& args, const SkSL::Context& context)
-                    : fSelf(self), fArgs(args), fContext(context) {}
+            FPCallbacks(GrGLSLSkSLFP* self,
+                        EmitArgs& args,
+                        const char* inputColor,
+                        const std::vector<SkSL::SampleUsage>& sampleUsages,
+                        const SkSL::Context& context)
+                    : fSelf(self)
+                    , fArgs(args)
+                    , fInputColor(inputColor)
+                    , fSampleUsages(sampleUsages)
+                    , fContext(context) {}
 
             using String = SkSL::String;
 
             String declareUniform(const SkSL::VarDeclaration* decl) override {
                 const SkSL::Variable& var = decl->var();
                 if (var.type().isOpaque()) {
-                    // Nothing to do. The only opaque type we should see is fragmentProcessor, and
-                    // those (children) are handled specially, above.
-                    SkASSERT(var.type() == *fContext.fTypes.fFragmentProcessor);
+                    // Nothing to do. The only opaque types we should see are children, and those
+                    // are handled specially, above.
+                    SkASSERT(var.type().isEffectChild());
                     return String(var.name());
                 }
 
@@ -93,7 +101,22 @@ public:
             }
 
             String sampleChild(int index, String coords) override {
-                return String(fSelf->invokeChild(index, fArgs, coords).c_str());
+                // If the child was sampled using the coords passed to main (and they are never
+                // modified), then we will have marked the child as PassThrough. The code generator
+                // doesn't know that, and still supplies coords. Inside invokeChild, we assert that
+                // any coords passed for a PassThrough child match args.fSampleCoords exactly.
+                //
+                // Normally, this is valid. Here, we *copied* the sample coords to a local variable
+                // (so that they're mutable in the runtime effect SkSL). Thus, the coords string we
+                // get here is the name of the local copy, and fSampleCoords still points to the
+                // unmodified original (which might be a varying, for example).
+                // To prevent the assert, we pass the empty string in this case. Note that for
+                // children sampled like this, invokeChild doesn't even use the coords parameter,
+                // except for that assert.
+                if (fSampleUsages[index].fPassThrough) {
+                    coords.clear();
+                }
+                return String(fSelf->invokeChild(index, fInputColor, fArgs, coords).c_str());
             }
 
             String sampleChildWithMatrix(int index, String matrix) override {
@@ -104,16 +127,26 @@ public:
                 const GrFragmentProcessor* child = fArgs.fFp.childProcessor(index);
                 const bool hasUniformMatrix = child && child->sampleUsage().hasUniformMatrix();
                 return String(
-                        fSelf->invokeChildWithMatrix(index, fArgs, hasUniformMatrix ? "" : matrix)
+                        fSelf->invokeChildWithMatrix(
+                                     index, fInputColor, fArgs, hasUniformMatrix ? "" : matrix)
                                 .c_str());
             }
 
-            GrGLSLSkSLFP*        fSelf;
-            EmitArgs&            fArgs;
-            const SkSL::Context& fContext;
+            GrGLSLSkSLFP*                         fSelf;
+            EmitArgs&                             fArgs;
+            const char*                           fInputColor;
+            const std::vector<SkSL::SampleUsage>& fSampleUsages;
+            const SkSL::Context&                  fContext;
         };
 
-        FPCallbacks callbacks(this, args, *program.fContext);
+        // Snap off a global copy of the input color at the start of main. We need this when
+        // we call child processors (particularly from helper functions, which can't "see" the
+        // parameter to main). Even from within main, if the code mutates the parameter, calls to
+        // sample should still be passing the original color (by default).
+        GrShaderVar inputColorCopy(args.fFragBuilder->getMangledFunctionName("inColor"),
+                                   kHalf4_GrSLType);
+        args.fFragBuilder->declareGlobal(inputColorCopy);
+        args.fFragBuilder->codeAppendf("%s = %s;\n", inputColorCopy.c_str(), args.fInputColor);
 
         // Callback to define a function (and return its mangled name)
         SkString coordsVarName = args.fFragBuilder->newTmpVarName("coords");
@@ -123,38 +156,36 @@ public:
             args.fFragBuilder->codeAppendf("float2 %s = %s;\n", coords, args.fSampleCoord);
         }
 
-        SkSL::PipelineStage::ConvertProgram(program, coords, &callbacks);
+        FPCallbacks callbacks(
+                this, args, inputColorCopy.c_str(), fp.fEffect->fSampleUsages, *program.fContext);
+        SkSL::PipelineStage::ConvertProgram(program, coords, args.fInputColor, &callbacks);
     }
 
     void onSetData(const GrGLSLProgramDataManager& pdman,
                    const GrFragmentProcessor& _proc) override {
+        using Type = SkRuntimeEffect::Uniform::Type;
         size_t uniIndex = 0;
         const GrSkSLFP& outer = _proc.cast<GrSkSLFP>();
         const uint8_t* uniformData = outer.fUniforms->bytes();
         for (const auto& v : outer.fEffect->uniforms()) {
-            const float* data = reinterpret_cast<const float*>(uniformData + v.offset);
+            const UniformHandle handle = fUniformHandles[uniIndex++];
+            auto floatData = [=] { return SkTAddOffset<const float>(uniformData, v.offset); };
+            auto intData = [=] { return SkTAddOffset<const int>(uniformData, v.offset); };
             switch (v.type) {
-                case SkRuntimeEffect::Uniform::Type::kFloat:
-                    pdman.set1fv(fUniformHandles[uniIndex++], v.count, data);
-                    break;
-                case SkRuntimeEffect::Uniform::Type::kFloat2:
-                    pdman.set2fv(fUniformHandles[uniIndex++], v.count, data);
-                    break;
-                case SkRuntimeEffect::Uniform::Type::kFloat3:
-                    pdman.set3fv(fUniformHandles[uniIndex++], v.count, data);
-                    break;
-                case SkRuntimeEffect::Uniform::Type::kFloat4:
-                    pdman.set4fv(fUniformHandles[uniIndex++], v.count, data);
-                    break;
-                case SkRuntimeEffect::Uniform::Type::kFloat2x2:
-                    pdman.setMatrix2fv(fUniformHandles[uniIndex++], v.count, data);
-                    break;
-                case SkRuntimeEffect::Uniform::Type::kFloat3x3:
-                    pdman.setMatrix3fv(fUniformHandles[uniIndex++], v.count, data);
-                    break;
-                case SkRuntimeEffect::Uniform::Type::kFloat4x4:
-                    pdman.setMatrix4fv(fUniformHandles[uniIndex++], v.count, data);
-                    break;
+                case Type::kFloat:  pdman.set1fv(handle, v.count, floatData()); break;
+                case Type::kFloat2: pdman.set2fv(handle, v.count, floatData()); break;
+                case Type::kFloat3: pdman.set3fv(handle, v.count, floatData()); break;
+                case Type::kFloat4: pdman.set4fv(handle, v.count, floatData()); break;
+
+                case Type::kFloat2x2: pdman.setMatrix2fv(handle, v.count, floatData()); break;
+                case Type::kFloat3x3: pdman.setMatrix3fv(handle, v.count, floatData()); break;
+                case Type::kFloat4x4: pdman.setMatrix4fv(handle, v.count, floatData()); break;
+
+                case Type::kInt:  pdman.set1iv(handle, v.count, intData()); break;
+                case Type::kInt2: pdman.set2iv(handle, v.count, intData()); break;
+                case Type::kInt3: pdman.set3iv(handle, v.count, intData()); break;
+                case Type::kInt4: pdman.set4iv(handle, v.count, intData()); break;
+
                 default:
                     SkDEBUGFAIL("Unsupported uniform type");
                     break;
@@ -165,23 +196,21 @@ public:
     std::vector<UniformHandle> fUniformHandles;
 };
 
-std::unique_ptr<GrSkSLFP> GrSkSLFP::Make(GrContext_Base* context, sk_sp<SkRuntimeEffect> effect,
-                                         const char* name, sk_sp<SkData> uniforms) {
+std::unique_ptr<GrSkSLFP> GrSkSLFP::Make(sk_sp<SkRuntimeEffect> effect,
+                                         const char* name,
+                                         sk_sp<SkData> uniforms) {
     if (uniforms->size() != effect->uniformSize()) {
         return nullptr;
     }
-    return std::unique_ptr<GrSkSLFP>(new GrSkSLFP(context->priv().getShaderErrorHandler(),
-                                                  std::move(effect), name, std::move(uniforms)));
+    return std::unique_ptr<GrSkSLFP>(new GrSkSLFP(std::move(effect), name, std::move(uniforms)));
 }
 
-GrSkSLFP::GrSkSLFP(ShaderErrorHandler* shaderErrorHandler,
-                   sk_sp<SkRuntimeEffect> effect,
+GrSkSLFP::GrSkSLFP(sk_sp<SkRuntimeEffect> effect,
                    const char* name,
                    sk_sp<SkData> uniforms)
         : INHERITED(kGrSkSLFP_ClassID,
-                    effect->fAllowColorFilter ? kConstantOutputForConstantInput_OptimizationFlag
-                                              : kNone_OptimizationFlags)
-        , fShaderErrorHandler(shaderErrorHandler)
+                    effect->allowColorFilter() ? kConstantOutputForConstantInput_OptimizationFlag
+                                               : kNone_OptimizationFlags)
         , fEffect(std::move(effect))
         , fName(name)
         , fUniforms(std::move(uniforms)) {
@@ -192,7 +221,6 @@ GrSkSLFP::GrSkSLFP(ShaderErrorHandler* shaderErrorHandler,
 
 GrSkSLFP::GrSkSLFP(const GrSkSLFP& other)
         : INHERITED(kGrSkSLFP_ClassID, other.optimizationFlags())
-        , fShaderErrorHandler(other.fShaderErrorHandler)
         , fEffect(other.fEffect)
         , fName(other.fName)
         , fUniforms(other.fUniforms) {
@@ -236,16 +264,16 @@ std::unique_ptr<GrFragmentProcessor> GrSkSLFP::clone() const {
 }
 
 SkPMColor4f GrSkSLFP::constantOutputForConstantInput(const SkPMColor4f& inputColor) const {
-    const skvm::Program* program = fEffect->getFilterColorProgram();
-    SkASSERT(program);
+    const skvm::Program& program = fEffect->getFilterColorInfo().program;
 
-    SkSTArray<2, SkPMColor4f, true> childColors;
+    SkSTArray<3, SkPMColor4f, true> childColors;
+    childColors.push_back(inputColor);
     for (int i = 0; i < this->numChildProcessors(); ++i) {
         childColors.push_back(ConstantOutputForConstantInput(this->childProcessor(i), inputColor));
     }
 
     SkPMColor4f result;
-    program->eval(1, childColors.begin(), fUniforms->data(), result.vec());
+    program.eval(1, childColors.begin(), fUniforms->data(), result.vec());
     return result;
 }
 
@@ -257,7 +285,6 @@ GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrSkSLFP);
 
 #include "include/effects/SkOverdrawColorFilter.h"
 #include "src/core/SkColorFilterBase.h"
-#include "src/gpu/effects/generated/GrConstColorProcessor.h"
 
 extern const char* SKSL_OVERDRAW_SRC;
 
@@ -282,10 +309,8 @@ GrRuntimeFPBuilder::GrRuntimeFPBuilder(sk_sp<SkRuntimeEffect> effect)
 
 GrRuntimeFPBuilder::~GrRuntimeFPBuilder() = default;
 
-std::unique_ptr<GrFragmentProcessor> GrRuntimeFPBuilder::makeFP(
-        GrRecordingContext* recordingContext) {
-    return this->effect()->makeFP(recordingContext,
-                                  this->uniforms(),
+std::unique_ptr<GrFragmentProcessor> GrRuntimeFPBuilder::makeFP() {
+    return this->effect()->makeFP(this->uniforms(),
                                   this->children(),
                                   this->numChildren());
 }
