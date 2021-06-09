@@ -10,6 +10,7 @@
 
 #include "include/core/SkMatrix.h"
 #include "include/core/SkRefCnt.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/core/SkTypes.h"
 #include "include/gpu/GrRecordingContext.h"
@@ -17,7 +18,6 @@
 #include "include/private/SkTDArray.h"
 #include "src/core/SkArenaAlloc.h"
 #include "src/core/SkClipStack.h"
-#include "src/core/SkSpan.h"
 #include "src/core/SkStringUtils.h"
 #include "src/core/SkTLazy.h"
 #include "src/gpu/GrAppliedClip.h"
@@ -44,6 +44,7 @@ public:
     GrOpsTask* asOpsTask() override { return this; }
 
     bool isEmpty() const { return fOpChains.empty(); }
+    bool usesMSAASurface() const { return fUsesMSAASurface; }
 
     /**
      * Empties the draw buffer of any queued up draws.
@@ -222,7 +223,7 @@ private:
         SkRect fBounds;
     };
 
-    void onCanSkip() override;
+    void onMakeSkippable() override;
 
     bool onIsUsed(GrSurfaceProxy*) const override;
 

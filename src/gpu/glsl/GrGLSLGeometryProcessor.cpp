@@ -119,10 +119,9 @@ void GrGLSLGeometryProcessor::collectTransforms(GrGLSLVertexBuilder* vb,
 
         const GrFragmentProcessor* node = &fp;
         while(node) {
-            SkASSERT(!node->isSampledWithExplicitCoords() &&
-                     !node->sampleUsage().hasVariableMatrix());
+            SkASSERT(!node->isSampledWithExplicitCoords());
 
-            if (node->sampleUsage().hasUniformMatrix()) {
+            if (node->sampleUsage().isUniformMatrix()) {
                 // We can stop once we hit an FP that adds transforms; this FP can reuse
                 // that FPs varying (possibly vivifying it if this was the first use).
                 transformedLocalCoord = localCoordsMap[node];
@@ -168,7 +167,7 @@ void GrGLSLGeometryProcessor::emitTransformCode(GrGLSLVertexBuilder* vb,
     std::unordered_map<const GrFragmentProcessor*, GrShaderVar> localCoordsMap;
     for (const auto& tr : fTransformInfos) {
         // If we recorded a transform info, its sample matrix must be uniform
-        SkASSERT(tr.fFP->sampleUsage().hasUniformMatrix());
+        SkASSERT(tr.fFP->sampleUsage().isUniformMatrix());
 
         SkString localCoords;
         // Build a concatenated matrix expression that we apply to the root local coord.
@@ -187,7 +186,7 @@ void GrGLSLGeometryProcessor::emitTransformCode(GrGLSLVertexBuilder* vb,
                     localCoords = SkStringPrintf("%s.xy1", cachedBaseCoord.getName().c_str());
                 }
                 break;
-            } else if (base->sampleUsage().hasUniformMatrix()) {
+            } else if (base->sampleUsage().isUniformMatrix()) {
                 // The FP knows the matrix expression it's sampled with, but its parent defined
                 // the uniform (when the expression is not a constant).
                 GrShaderVar uniform = uniformHandler->liftUniformToVertexShader(
@@ -210,7 +209,7 @@ void GrGLSLGeometryProcessor::emitTransformCode(GrGLSLVertexBuilder* vb,
             } else {
                 // This intermediate FP is just a pass through and doesn't need to be built
                 // in to the expression, but must visit its parents in case they add transforms
-                SkASSERT(!base->sampleUsage().hasMatrix() && !base->sampleUsage().fExplicitCoords);
+                SkASSERT(base->sampleUsage().isPassThrough() || !base->sampleUsage().isSampled());
             }
 
             base = base->parent();
@@ -227,9 +226,15 @@ void GrGLSLGeometryProcessor::emitTransformCode(GrGLSLVertexBuilder* vb,
 
         vb->codeAppend("{\n");
         if (tr.fOutputCoords.getType() == kFloat2_GrSLType) {
-            vb->codeAppendf("%s = ((%s) * %s).xy", tr.fOutputCoords.getName().c_str(),
-                                                   transformExpression.c_str(),
-                                                   localCoords.c_str());
+            if (vb->getProgramBuilder()->shaderCaps()->nonsquareMatrixSupport()) {
+                vb->codeAppendf("%s = float3x2(%s) * %s", tr.fOutputCoords.getName().c_str(),
+                                                          transformExpression.c_str(),
+                                                          localCoords.c_str());
+            } else {
+                vb->codeAppendf("%s = ((%s) * %s).xy", tr.fOutputCoords.getName().c_str(),
+                                                       transformExpression.c_str(),
+                                                       localCoords.c_str());
+            }
         } else {
             SkASSERT(tr.fOutputCoords.getType() == kFloat3_GrSLType);
             vb->codeAppendf("%s = (%s) * %s", tr.fOutputCoords.getName().c_str(),
@@ -354,6 +359,11 @@ static void write_vertex_position(GrGLSLVertexBuilder* vertBuilder,
                                  mangledMatrixName,
                                  inPos.getName().c_str(),
                                  mangledMatrixName);
+    } else if (shaderCaps.nonsquareMatrixSupport()) {
+        vertBuilder->codeAppendf("float2 %s = float3x2(%s) * %s.xy1;\n",
+                                 outName.c_str(),
+                                 mangledMatrixName,
+                                 inPos.getName().c_str());
     } else {
         vertBuilder->codeAppendf("float2 %s = (%s * %s.xy1).xy;\n",
                                  outName.c_str(),

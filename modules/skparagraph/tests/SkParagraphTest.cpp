@@ -11,6 +11,7 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypeface.h"
@@ -29,7 +30,6 @@
 #include "modules/skparagraph/src/TextLine.h"
 #include "modules/skparagraph/utils/TestFontCollection.h"
 #include "src/core/SkOSFile.h"
-#include "src/core/SkSpan.h"
 #include "src/utils/SkOSPath.h"
 #include "src/utils/SkShaperJSONWriter.h"
 #include "tests/Test.h"
@@ -6009,11 +6009,11 @@ DEF_TEST(SkParagraph_PositionInsideEmoji, reporter) {
     }
 }
 
-DEF_TEST(SkParagraph_SingleLineHeight, reporter) {
+DEF_TEST(SkParagraph_SingleLineHeight1, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
 
-    TestCanvas canvas("SkParagraph_SingleLineHeight.png");
+    TestCanvas canvas("SkParagraph_SingleLineHeight1.png");
 
     auto paint = [&](const char* text) {
         ParagraphStyle paragraph_style;
@@ -6032,6 +6032,34 @@ DEF_TEST(SkParagraph_SingleLineHeight, reporter) {
         paragraph->layout(80);
         paragraph->paint(canvas.get(), 0, 0);
         REPORTER_ASSERT(reporter, paragraph->getHeight() == 14.0f);
+    };
+
+    paint("Loooooooooooooooooooooooooooooooooooong text");
+    paint("");
+}
+
+DEF_TEST(SkParagraph_SingleLineHeight2, reporter) {
+    sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
+    if (!fontCollection->fontsFound()) return;
+
+    TestCanvas canvas("SkParagraph_SingleLineHeight2.png");
+
+    auto paint = [&](const char* text) {
+        ParagraphStyle paragraph_style;
+        paragraph_style.setMaxLines(1);
+        ParagraphBuilderImpl builder(paragraph_style, fontCollection);
+        TextStyle text_style;
+        text_style.setColor(SK_ColorBLACK);
+        text_style.setFontFamilies({SkString("Ahem")});
+        text_style.setFontSize(14);
+        text_style.setHeight(2);
+        text_style.setHeightOverride(true);
+        builder.pushStyle(text_style);
+        builder.addText(text);
+        auto paragraph = builder.Build();
+        paragraph->layout(80);
+        paragraph->paint(canvas.get(), 0, 0);
+        REPORTER_ASSERT(reporter, paragraph->getHeight() == 28.0f);
     };
 
     paint("Loooooooooooooooooooooooooooooooooooong text");

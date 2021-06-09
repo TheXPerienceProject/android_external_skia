@@ -30,6 +30,10 @@
 // In the past, FT_GlyphSlot_Own_Bitmap was defined in this header file.
 #include FT_SYNTHESIS_H
 
+#ifdef TT_SUPPORT_COLRV1
+#include "src/core/SkScopeExit.h"
+#endif
+
 // FT_LOAD_COLOR and the corresponding FT_Pixel_Mode::FT_PIXEL_MODE_BGRA
 // were introduced in FreeType 2.5.0.
 // The following may be removed once FreeType 2.5.0 is required to build.
@@ -53,6 +57,12 @@ const char* SkTraceFtrGetError(int e) {
     }
 }
 #endif  // SK_DEBUG
+
+#ifdef TT_SUPPORT_COLRV1
+bool operator==(const FT_OpaquePaint& a, const FT_OpaquePaint& b) {
+    return a.p == b.p && a.insert_root_transform == b.insert_root_transform;
+}
+#endif
 
 namespace {
 
@@ -374,6 +384,15 @@ inline SkColorType SkColorType_for_SkMaskFormat(SkMask::Format format) {
 // it does support these features.
 #ifdef TT_SUPPORT_COLRV1
 
+struct OpaquePaintHasher {
+  size_t operator()(const FT_OpaquePaint& opaque_paint) {
+      return SkGoodHash()(opaque_paint.p) ^
+             SkGoodHash()(opaque_paint.insert_root_transform);
+  }
+};
+
+using VisitedSet = SkTHashSet<FT_OpaquePaint, OpaquePaintHasher>;
+
 bool generateFacePathCOLRv1(FT_Face face, SkGlyphID glyphID, SkPath* path);
 
 inline float SkColrV1AlphaToFloat(uint16_t alpha) { return (alpha / float(1 << 14)); }
@@ -472,6 +491,28 @@ inline SkPoint SkVectorProjection(SkPoint a, SkPoint b) {
 void colrv1_configure_skpaint(FT_Face face, const FT_Color* palette,
                               FT_COLR_Paint colrv1_paint, SkPaint* paint) {
 
+    auto fetch_color_stops = [&face, &palette](FT_ColorStopIterator& color_stop_iterator,
+                                               std::vector<SkScalar>& stops,
+                                               std::vector<SkColor>& colors) {
+        const FT_UInt num_color_stops = color_stop_iterator.num_color_stops;
+        stops.resize(num_color_stops);
+        colors.resize(num_color_stops);
+
+        FT_ColorStop color_stop;
+        while (FT_Get_Colorline_Stops(face, &color_stop, &color_stop_iterator)) {
+            FT_UInt index = color_stop_iterator.current_color_stop - 1;
+            stops[index] = color_stop.stop_offset / float(1 << 14);
+            FT_UInt16& palette_index = color_stop.color.palette_index;
+            // TODO(drott): Ensure palette_index is sanitized on the FreeType
+            // side and 0xFFFF foreground color will be handled correctly here.
+            colors[index] = SkColorSetARGB(
+                    palette[palette_index].alpha * SkColrV1AlphaToFloat(color_stop.color.alpha),
+                    palette[palette_index].red,
+                    palette[palette_index].green,
+                    palette[palette_index].blue);
+        }
+    };
+
     switch (colrv1_paint.format) {
         case FT_COLR_PAINTFORMAT_SOLID: {
             SkColor color =
@@ -510,31 +551,12 @@ void colrv1_configure_skpaint(FT_Face face, const FT_Color* palette,
             perpendicular_to_p2_p0 = SkPoint::Make(perpendicular_to_p2_p0.y(), -perpendicular_to_p2_p0.x());
             line_positions[1] = p0 + SkVectorProjection((p1 - p0), perpendicular_to_p2_p0);
 
-            /* populate points */
-            const FT_UInt num_color_stops =
-                    colrv1_paint.u.linear_gradient.colorline.color_stop_iterator.num_color_stops;
             std::vector<SkScalar> stops;
             std::vector<SkColor> colors;
-            stops.resize(num_color_stops);
-            colors.resize(num_color_stops);
-
-            FT_ColorStop color_stop;
-            while (FT_Get_Colorline_Stops(
-                    face, &color_stop,
-                    &colrv1_paint.u.linear_gradient.colorline.color_stop_iterator)) {
-                FT_UInt index = colrv1_paint.u.linear_gradient.colorline.color_stop_iterator
-                                        .current_color_stop -
-                                1;
-                stops[index] = color_stop.stop_offset / float(1 << 14);
-                FT_UInt16& palette_index = color_stop.color.palette_index;
-                colors[index] = SkColorSetARGB(
-                        palette[palette_index].alpha * SkColrV1AlphaToFloat(color_stop.color.alpha),
-                        palette[palette_index].red, palette[palette_index].green,
-                        palette[palette_index].blue);
-            }
+            fetch_color_stops(colrv1_paint.u.linear_gradient.colorline.color_stop_iterator, stops, colors);
 
             sk_sp<SkShader> shader(SkGradientShader::MakeLinear(
-                    line_positions, colors.data(), stops.data(), num_color_stops,
+                    line_positions, colors.data(), stops.data(), stops.size(),
                     ToSkTileMode(colrv1_paint.u.linear_gradient.colorline.extend)));
             SkASSERT(shader);
             // An opaque color is needed to ensure the gradient's not modulated by alpha.
@@ -553,33 +575,16 @@ void colrv1_configure_skpaint(FT_Face face, const FT_Color* palette,
                                         -colrv1_paint.u.radial_gradient.c1.y);
             SkScalar end_radius = colrv1_paint.u.radial_gradient.r1;
 
-            const FT_UInt num_color_stops =
-                    colrv1_paint.u.radial_gradient.colorline.color_stop_iterator.num_color_stops;
+
             std::vector<SkScalar> stops;
             std::vector<SkColor> colors;
-            stops.resize(num_color_stops);
-            colors.resize(num_color_stops);
-
-            FT_ColorStop color_stop;
-            while (FT_Get_Colorline_Stops(
-                    face, &color_stop,
-                    &colrv1_paint.u.radial_gradient.colorline.color_stop_iterator)) {
-                FT_UInt index = colrv1_paint.u.radial_gradient.colorline.color_stop_iterator
-                                        .current_color_stop -
-                                1;
-                stops[index] = color_stop.stop_offset / float(1 << 14);
-                FT_UInt16& palette_index = color_stop.color.palette_index;
-                colors[index] = SkColorSetARGB(
-                        palette[palette_index].alpha * SkColrV1AlphaToFloat(color_stop.color.alpha),
-                        palette[palette_index].red, palette[palette_index].green,
-                        palette[palette_index].blue);
-            }
+            fetch_color_stops(colrv1_paint.u.radial_gradient.colorline.color_stop_iterator, stops, colors);
 
             // An opaque color is needed to ensure the gradient's not modulated by alpha.
             paint->setColor(SK_ColorBLACK);
 
             paint->setShader(SkGradientShader::MakeTwoPointConical(
-                    start, radius, end, end_radius, colors.data(), stops.data(), num_color_stops,
+                    start, radius, end, end_radius, colors.data(), stops.data(), stops.size(),
                     ToSkTileMode(colrv1_paint.u.radial_gradient.colorline.extend)));
             break;
         }
@@ -589,27 +594,9 @@ void colrv1_configure_skpaint(FT_Face face, const FT_Color* palette,
             SkScalar startAngle = SkFixedToScalar(colrv1_paint.u.sweep_gradient.start_angle);
             SkScalar endAngle = SkFixedToScalar(colrv1_paint.u.sweep_gradient.end_angle);
 
-            const FT_UInt num_color_stops =
-                    colrv1_paint.u.sweep_gradient.colorline.color_stop_iterator.num_color_stops;
             std::vector<SkScalar> stops;
             std::vector<SkColor> colors;
-            stops.resize(num_color_stops);
-            colors.resize(num_color_stops);
-
-            FT_ColorStop color_stop;
-            while (FT_Get_Colorline_Stops(
-                    face, &color_stop,
-                    &colrv1_paint.u.sweep_gradient.colorline.color_stop_iterator)) {
-                FT_UInt index = colrv1_paint.u.sweep_gradient.colorline.color_stop_iterator
-                                        .current_color_stop -
-                                1;
-                stops[index] = color_stop.stop_offset / float(1 << 14);
-                FT_UInt16& palette_index = color_stop.color.palette_index;
-                colors[index] = SkColorSetARGB(
-                        palette[palette_index].alpha * SkColrV1AlphaToFloat(color_stop.color.alpha),
-                        palette[palette_index].red, palette[palette_index].green,
-                        palette[palette_index].blue);
-            }
+            fetch_color_stops(colrv1_paint.u.sweep_gradient.colorline.color_stop_iterator, stops, colors);
 
             // An opaque color is needed to ensure the gradient's not modulated by alpha.
             paint->setColor(SK_ColorBLACK);
@@ -636,7 +623,7 @@ void colrv1_configure_skpaint(FT_Face face, const FT_Color* palette,
             angle_adjust.postScale(-1, 1, center.x(), center.y());
 
             paint->setShader(SkGradientShader::MakeSweep(
-                    center.x(), center.y(), colors.data(), stops.data(), num_color_stops,
+                    center.x(), center.y(), colors.data(), stops.data(), stops.size(),
                     SkTileMode::kDecal, startAngle, endAngle, 0, &angle_adjust));
             break;
         }
@@ -795,7 +782,16 @@ bool colrv1_start_glyph(SkCanvas* canvas,
 bool colrv1_traverse_paint(SkCanvas* canvas,
                            const FT_Color* palette,
                            FT_Face face,
-                           FT_OpaquePaint opaque_paint) {
+                           FT_OpaquePaint opaque_paint,
+                           VisitedSet* visited_set) {
+    // Cycle detection, see section "5.7.11.1.9 Color glyphs as a directed acyclic graph".
+    if (visited_set->contains(opaque_paint)) {
+        return false;
+    }
+
+    visited_set->add(opaque_paint);
+    SK_AT_SCOPE_EXIT(visited_set->remove(opaque_paint));
+
     FT_COLR_Paint paint;
     if (!FT_Get_Paint(face, opaque_paint, &paint)) {
       return false;
@@ -811,7 +807,7 @@ bool colrv1_traverse_paint(SkCanvas* canvas,
             FT_OpaquePaint opaque_paint_fetch;
             opaque_paint_fetch.p = nullptr;
             while (FT_Get_Paint_Layers(face, &layer_iterator, &opaque_paint_fetch)) {
-                colrv1_traverse_paint(canvas, palette, face, opaque_paint_fetch);
+                colrv1_traverse_paint(canvas, palette, face, opaque_paint_fetch, visited_set);
             }
             break;
         }
@@ -832,7 +828,8 @@ bool colrv1_traverse_paint(SkCanvas* canvas,
                 colrv1_draw_glyph_with_path(canvas, palette, face, paint, fillPaint);
             } else {
                 colrv1_draw_paint(canvas, palette, face, paint);
-                traverse_result = colrv1_traverse_paint(canvas, palette, face, paint.u.glyph.paint);
+                traverse_result = colrv1_traverse_paint(canvas, palette, face,
+                                                        paint.u.glyph.paint, visited_set);
             }
             break;
         case FT_COLR_PAINTFORMAT_COLR_GLYPH:
@@ -841,30 +838,36 @@ bool colrv1_traverse_paint(SkCanvas* canvas,
             break;
         case FT_COLR_PAINTFORMAT_TRANSFORMED:
             colrv1_transform(canvas, face, paint);
-            traverse_result =
-                    colrv1_traverse_paint(canvas, palette, face, paint.u.transformed.paint);
+            traverse_result = colrv1_traverse_paint(canvas, palette, face,
+                                                    paint.u.transformed.paint, visited_set);
             break;
         case FT_COLR_PAINTFORMAT_TRANSLATE:
             colrv1_transform(canvas, face, paint);
-            traverse_result = colrv1_traverse_paint(canvas, palette, face, paint.u.translate.paint);
+            traverse_result = colrv1_traverse_paint(canvas, palette, face,
+                                                    paint.u.translate.paint, visited_set);
             break;
         case FT_COLR_PAINTFORMAT_ROTATE:
             colrv1_transform(canvas, face, paint);
-            traverse_result = colrv1_traverse_paint(canvas, palette, face, paint.u.rotate.paint);
+            traverse_result =
+                    colrv1_traverse_paint(canvas, palette, face,
+                                          paint.u.rotate.paint, visited_set);
             break;
         case FT_COLR_PAINTFORMAT_SKEW:
             colrv1_transform(canvas, face, paint);
-            traverse_result = colrv1_traverse_paint(canvas, palette, face, paint.u.skew.paint);
+            traverse_result =
+                    colrv1_traverse_paint(canvas, palette, face,
+                                          paint.u.skew.paint, visited_set);
             break;
         case FT_COLR_PAINTFORMAT_COMPOSITE: {
-            traverse_result =
-                    colrv1_traverse_paint(canvas, palette, face, paint.u.composite.backdrop_paint);
+            traverse_result = colrv1_traverse_paint(
+                    canvas, palette, face, paint.u.composite.backdrop_paint, visited_set);
             SkPaint blend_mode_paint;
             blend_mode_paint.setBlendMode(ToSkBlendMode(paint.u.composite.composite_mode));
             canvas->saveLayer(nullptr, &blend_mode_paint);
             traverse_result =
                     traverse_result &&
-                    colrv1_traverse_paint(canvas, palette, face, paint.u.composite.source_paint);
+                    colrv1_traverse_paint(
+                            canvas, palette, face, paint.u.composite.source_paint, visited_set);
             canvas->restore();
             break;
         }
@@ -892,7 +895,8 @@ bool colrv1_start_glyph(SkCanvas* canvas,
     bool has_colrv1_layers = false;
     if (FT_Get_Color_Glyph_Paint(ft_face, glyph_id, root_transform, &opaque_paint)) {
         has_colrv1_layers = true;
-        colrv1_traverse_paint(canvas, palette, ft_face, opaque_paint);
+        VisitedSet visited_set;
+        colrv1_traverse_paint(canvas, palette, ft_face, opaque_paint, &visited_set);
     }
     return has_colrv1_layers;
 }
