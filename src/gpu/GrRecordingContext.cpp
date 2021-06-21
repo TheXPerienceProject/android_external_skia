@@ -71,7 +71,7 @@ bool GrRecordingContext::init() {
         prcOptions.fGpuPathRenderers &= ~GpuPathRenderers::kSmall;
     }
 
-    bool reduceOpsTaskSplitting = false;
+    bool reduceOpsTaskSplitting = true;
     if (this->caps()->avoidReorderingRenderTasks()) {
         reduceOpsTaskSplitting = false;
     } else if (GrContextOptions::Enable::kYes == this->options().fReduceOpsTaskSplitting) {
