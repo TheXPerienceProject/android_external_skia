@@ -11,7 +11,6 @@
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "src/gpu/GrDirectContextPriv.h"
-#include "src/gpu/GrResourceCache.h"
 #include "tools/ToolUtils.h"
 
 
@@ -46,7 +45,7 @@ void set_cache_budget(SkCanvas* canvas, int approxImagesInBudget) {
     auto context =  canvas->recordingContext()->asDirectContext();
     SkASSERT(context);
     context->flushAndSubmit();
-    context->priv().getResourceCache()->purgeUnlockedResources();
+    context->priv().testingOnly_purgeAllUnlockedResources();
     sk_sp<SkImage> image;
     make_images(&image, 1);
     draw_image(canvas, image.get());
@@ -55,7 +54,7 @@ void set_cache_budget(SkCanvas* canvas, int approxImagesInBudget) {
     context->getResourceCacheUsage(&baselineCount, nullptr);
     baselineCount -= 1; // for the image's textures.
     context->setResourceCacheLimits(baselineCount + approxImagesInBudget, 1 << 30);
-    context->priv().getResourceCache()->purgeUnlockedResources();
+    context->priv().testingOnly_purgeAllUnlockedResources();
 }
 
 //////////////////////////////////////////////////////////////////////////////

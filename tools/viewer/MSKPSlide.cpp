@@ -58,7 +58,6 @@ void MSKPSlide::draw(SkCanvas* canvas) {
     ImGui::Text("Frame:");
     ImGui::SameLine();
     ImGui::PushButtonRepeat(true);  // Enable click-and-hold for frame arrows.
-    int oldFrame = fFrame;
     if (ImGui::ArrowButton("-mksp_frame", ImGuiDir_Left)) {
         fFrame = (fFrame + fPlayer->numFrames() - 1)%fPlayer->numFrames();
     }
@@ -70,11 +69,6 @@ void MSKPSlide::draw(SkCanvas* canvas) {
     if (ImGui::ArrowButton("+mskp_frame", ImGuiDir_Right)) {
         fFrame = (fFrame + 1)%fPlayer->numFrames();
     }
-    if (fFrame != oldFrame) {
-        // When manually adjusting frames force layers to redraw.
-        this->redrawLayers();
-    }
-
     ImGui::PopButtonRepeat();
     ImGui::EndGroup();
 
@@ -88,16 +82,6 @@ void MSKPSlide::draw(SkCanvas* canvas) {
     }
     ImGui::EndGroup();
 
-    // UI for visualizing contents of offscreen layers.
-    ImGui::Text("Offscreen Layers "); ImGui::SameLine();
-    ImGui::Checkbox("List All Layers", &fListAllLayers);
-    ImGui::RadioButton("root", &fDrawLayerID, -1);
-    const std::vector<int>& layerIDs = fListAllLayers ? fAllLayerIDs : fFrameLayerIDs[fFrame];
-    fLayerIDStrings.resize(layerIDs.size());
-    for (size_t i = 0; i < layerIDs.size(); ++i) {
-        fLayerIDStrings[i] = SkStringPrintf("%d", layerIDs[i]);
-        ImGui::RadioButton(fLayerIDStrings[i].c_str(), &fDrawLayerID, layerIDs[i]);
-    }
     ImGui::End();
 
     auto bounds = SkIRect::MakeSize(fPlayer->frameDimensions(fFrame));
@@ -114,11 +98,6 @@ void MSKPSlide::draw(SkCanvas* canvas) {
     }
 
     canvas->save();
-    if (fDrawLayerID >= 0) {
-        // clip out the root layer content, but still call playFrame so layer contents are updated
-        // to fFrame.
-        bounds = SkIRect::MakeEmpty();
-    }
     canvas->clipIRect(bounds);
     canvas->clear(SkColor4f{fBackgroundColor[0],
                             fBackgroundColor[1],
@@ -126,20 +105,6 @@ void MSKPSlide::draw(SkCanvas* canvas) {
                             fBackgroundColor[3]});
     fPlayer->playFrame(canvas, fFrame);
     canvas->restore();
-
-    if (fDrawLayerID >= 0) {
-        if (sk_sp<SkImage> layerImage = fPlayer->layerSnapshot(fDrawLayerID)) {
-            canvas->save();
-            canvas->clipIRect(SkIRect::MakeSize(layerImage->dimensions()));
-            canvas->clear(SkColor4f{fBackgroundColor[0],
-                                    fBackgroundColor[1],
-                                    fBackgroundColor[2],
-                                    fBackgroundColor[3]});
-            canvas->drawImage(std::move(layerImage), 0, 0);
-            canvas->restore();
-        }
-        return;
-    }
 }
 
 bool MSKPSlide::animate(double nanos) {
@@ -161,14 +126,10 @@ bool MSKPSlide::animate(double nanos) {
     double elapsed = nanos - fLastFrameTime;
     double frameTime = 1E9/fFPS;
     int framesToAdvance = elapsed/frameTime;
-    fFrame = fFrame + framesToAdvance;
-    if (fFrame >= fPlayer->numFrames()) {
-        this->redrawLayers();
-    }
-    fFrame %= fPlayer->numFrames();
+    fFrame = (fFrame + framesToAdvance)%fPlayer->numFrames();
     // Instead of just adding elapsed, note the time when this frame should have begun.
     fLastFrameTime += framesToAdvance*frameTime;
-    return framesToAdvance > 0;
+    return framesToAdvance%fPlayer->numFrames() != 0;
 }
 
 void MSKPSlide::load(SkScalar, SkScalar) {
@@ -177,31 +138,9 @@ void MSKPSlide::load(SkScalar, SkScalar) {
     }
     fStream->rewind();
     fPlayer = MSKPPlayer::Make(fStream.get());
-    if (!fPlayer) {
-        return;
-    }
-    fAllLayerIDs = fPlayer->layerIDs();
-    fFrameLayerIDs.clear();
-    fFrameLayerIDs.resize(fPlayer->numFrames());
-    for (int i = 0; i < fPlayer->numFrames(); ++i) {
-        fFrameLayerIDs[i] = fPlayer->layerIDs(i);
-    }
 }
 
 void MSKPSlide::unload() { fPlayer.reset(); }
 
 void MSKPSlide::gpuTeardown() { fPlayer->resetLayers(); }
 
-void MSKPSlide::redrawLayers() {
-    if (fDrawLayerID >= 0) {
-        // Completely reset the layers so that we won't see content from later frames on layers
-        // that haven't been visited from frames 0..fFrames.
-        fPlayer->resetLayers();
-    } else {
-        // Just rewind layers so that we redraw any layer from scratch on the next frame that
-        // updates it. Important for benchmarking/profiling as otherwise if a layer is only
-        // drawn once in the frame sequence then it will never be updated after the first play
-        // through. This doesn't reallocate the layer backing stores.
-        fPlayer->rewindLayers();
-    }
-}

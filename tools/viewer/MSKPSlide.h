@@ -27,9 +27,6 @@ public:
     void gpuTeardown() override;
 
 private:
-    // Call if layers need to be redrawn because we've looped playback or UI interaction.
-    void redrawLayers();
-
     std::unique_ptr<SkStreamSeekable> fStream;
     std::unique_ptr<MSKPPlayer>       fPlayer;
 
@@ -42,12 +39,6 @@ private:
 
     // Default to transparent black, which is correct for Android MSKPS.
     float fBackgroundColor[4] = {0, 0, 0, 0};
-
-    std::vector<int>              fAllLayerIDs;
-    std::vector<std::vector<int>> fFrameLayerIDs;
-    std::vector<SkString>         fLayerIDStrings;
-    int                           fDrawLayerID = -1;  // -1 means just draw the root layer
-    bool                          fListAllLayers = true;
 
     using INHERITED = Slide;
 };

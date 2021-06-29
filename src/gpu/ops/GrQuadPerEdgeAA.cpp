@@ -461,7 +461,7 @@ void IssueDraw(const GrCaps& caps, GrOpsRenderPass* renderPass, const VertexSpec
         int numIndicesToDraw = quadsInDraw * numIndicesPerQuad;
 
         int minVertex = runningQuadCount * numVertsPerQuad;
-        int maxVertex = (runningQuadCount + quadsInDraw) * numVertsPerQuad - 1; // inclusive
+        int maxVertex = (runningQuadCount + quadsInDraw) * numVertsPerQuad;
 
         renderPass->drawIndexed(numIndicesToDraw, baseIndex, minVertex, maxVertex,
                                 absVertBufferOffset);
