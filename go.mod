@@ -16,7 +16,7 @@ require (
 	github.com/stretchr/testify v1.6.1
 	go.chromium.org/luci v0.0.0-20201121231857-b9ab316d7198 // indirect
 	go.skia.org/infra v0.0.0-20210225173621-2d381258bc7f
-	golang.org/x/net v0.7.0 // indirect
+	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/oauth2 v0.0.0-20201109201403-9fd604954f58 // indirect
 	google.golang.org/api v0.35.0
 	google.golang.org/genproto v0.0.0-20201119123407-9b1e624d6bc4 // indirect
