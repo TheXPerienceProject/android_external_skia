@@ -2022,7 +2022,9 @@ cc_library_static {
         export_include_dirs: [
           "android",
         ],
+// QTI_BEGIN: 2025-06-12: Performance: Perf: Enable UI perf mode automatically according to pid
         cppflags: ["-DQC_JPEG_MT"],
+// QTI_END: 2025-06-12: Performance: Perf: Enable UI perf mode automatically according to pid
       },
       host_linux: {
         srcs: [

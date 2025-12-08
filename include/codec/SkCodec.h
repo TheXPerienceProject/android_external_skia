@@ -146,10 +146,12 @@ public:
          *  SkCodec should choose one of the image sequences for animation.
          */
         kPreferAnimation,
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
         /**
          * WA: create SkCrabbyAvif codec instead of SkHeifCodec
          */
         kPreferCrabbyAvif,
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
     };
 
     /**

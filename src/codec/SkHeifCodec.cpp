@@ -177,7 +177,9 @@ std::unique_ptr<SkCodec> SkHeifCodec::MakeFromStream(std::unique_ptr<SkStream> s
     }
 
     HeifFrameInfo heifInfo;
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
     auto dupStream = stream->duplicate();
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
     if (!heifDecoder->init(new SkHeifStreamWrapper(stream.release()), &heifInfo)) {
         *result = SkCodec::kInvalidInput;
         return nullptr;
@@ -212,7 +214,9 @@ std::unique_ptr<SkCodec> SkHeifCodec::MakeFromStream(std::unique_ptr<SkStream> s
 
     *result = SkCodec::kSuccess;
     return std::unique_ptr<SkCodec>(new SkHeifCodec(
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
             std::move(info), heifDecoder.release(), orientation, frameCount > 1, format, std::move(dupStream)));
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
 }
 
 SkHeifCodec::SkHeifCodec(
@@ -220,9 +224,11 @@ SkHeifCodec::SkHeifCodec(
         HeifDecoder* heifDecoder,
         SkEncodedOrigin origin,
         bool useAnimation,
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
         SkEncodedImageFormat format,
         std::unique_ptr<SkStream> stream)
     : INHERITED(std::move(info), skcms_PixelFormat_RGBA_8888, std::move(stream), origin)
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
     , fHeifDecoder(heifDecoder)
     , fSwizzleSrcRow(nullptr)
     , fColorXformSrcRow(nullptr)

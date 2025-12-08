@@ -109,10 +109,12 @@ static std::vector<Decoder>* get_decoders_for_editing() {
 #if defined(SK_CODEC_DECODES_WBMP)
             decoders->push_back(SkWbmpDecoder::Decoder());
 #endif
+// QTI_BEGIN: 2025-05-22: Video: Skia: Temporarily fallback HEIF decoding path to legacy libheif
 #if defined(SK_HAS_HEIF_LIBRARY)
             // Temporarily fallback to legacy libheif path if this lib exist
             decoders->push_back(SkHeifDecoder::Decoder());
 #endif
+// QTI_END: 2025-05-22: Video: Skia: Temporarily fallback HEIF decoding path to legacy libheif
 #if defined(SK_CODEC_DECODES_AVIF)
 #if defined(SK_BUILD_FOR_ANDROID_FRAMEWORK)
             decoders->push_back(SkAvifDecoder::CrabbyAvif::Decoder());
@@ -179,8 +181,10 @@ std::unique_ptr<SkCodec> SkCodec::MakeFromStream(
     }
 
     if (selectionPolicy != SelectionPolicy::kPreferStillImage
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
             && selectionPolicy != SelectionPolicy::kPreferAnimation
             && selectionPolicy != SelectionPolicy::kPreferCrabbyAvif) {
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
         *outResult = kInvalidParameters;
         return nullptr;
     }
@@ -220,10 +224,12 @@ std::unique_ptr<SkCodec> SkCodec::MakeFromStream(
             if (proc.id == "png") {
                 return proc.makeFromStream(std::move(stream), outResult, chunkReader);
             } else if (proc.id == "heif" || proc.id == "gif") {
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
                 if (selectionPolicy == SelectionPolicy::kPreferCrabbyAvif) {
                     // Request to create SkCrabbyAvifCodec, skip SkHeifCodec
                     continue;
                 }
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
                 return proc.makeFromStream(std::move(stream), outResult, &selectionPolicy);
             } else if (proc.id == "raw") {
                 rawFallback = proc.makeFromStream;

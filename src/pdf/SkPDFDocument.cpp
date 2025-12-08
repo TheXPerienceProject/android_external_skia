@@ -4,11 +4,13 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
+// QTI_BEGIN: 2025-04-27: Performance: Perf: UI perf mode optimization
 /*
  * Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
  * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
+// QTI_END: 2025-04-27: Performance: Perf: UI perf mode optimization
 
 #include "include/docs/SkPDFDocument.h"
 
@@ -55,13 +57,17 @@
 #include "include/docs/SkPDFJpegHelpers.h"
 #endif
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2025-04-27: Performance: Perf: UI perf mode optimization
 #include <cutils/properties.h>
+// QTI_END: 2025-04-27: Performance: Perf: UI perf mode optimization
+// QTI_BEGIN: 2025-06-12: Performance: Perf: Enable UI perf mode automatically according to pid
 #include <sys/types.h>
 #include <unistd.h>
+// QTI_END: 2025-06-12: Performance: Perf: Enable UI perf mode automatically according to pid
+// QTI_BEGIN: 2025-04-27: Performance: Perf: UI perf mode optimization
 #define UI_PERFMODE "debug.ui.perfmode.enable"
-/* QTI_END */
 
+// QTI_END: 2025-04-27: Performance: Perf: UI perf mode optimization
 // For use in SkCanvas::drawAnnotation
 const char* SkPDFGetElemIdKey() {
     static constexpr char key[] = "PDF_Node_Key";
@@ -707,14 +713,18 @@ void SkPDF::SetNodeId(SkCanvas* canvas, int elemId) {
 
 sk_sp<SkDocument> SkPDF::MakeDocument(SkWStream* stream, const SkPDF::Metadata& metadata) {
     SkPDF::Metadata meta = metadata;
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2025-04-27: Performance: Perf: UI perf mode optimization
     if (meta.fCompressionLevel == SkPDF::Metadata::CompressionLevel::Default) {
+// QTI_END: 2025-04-27: Performance: Perf: UI perf mode optimization
+// QTI_BEGIN: 2025-06-12: Performance: Perf: Enable UI perf mode automatically according to pid
         int32_t ui_perfmode = property_get_int32(UI_PERFMODE, 0);
         if (ui_perfmode > 0 && ui_perfmode == getpid()) {
             meta.fCompressionLevel = SkPDF::Metadata::CompressionLevel::None;
+// QTI_END: 2025-06-12: Performance: Perf: Enable UI perf mode automatically according to pid
+// QTI_BEGIN: 2025-04-27: Performance: Perf: UI perf mode optimization
         }
     }
-    /* QTI_END */
+// QTI_END: 2025-04-27: Performance: Perf: UI perf mode optimization
     if (meta.fRasterDPI <= 0) {
         meta.fRasterDPI = 72.0f;
     }

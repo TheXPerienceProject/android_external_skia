@@ -220,8 +220,10 @@ std::unique_ptr<SkAndroidCodec> SkAndroidCodec::MakeFromCodec(std::unique_ptr<Sk
         case SkEncodedImageFormat::kJPEG:
         case SkEncodedImageFormat::kBMP:
         case SkEncodedImageFormat::kWBMP:
+// QTI_BEGIN: 2025-05-22: Video: Skia: Temporarily fallback HEIF decoding path to legacy libheif
         // Temporarily fallback HEIF to legacy path. Need to envaluate SkCrabbyAvifCodec performance
         case SkEncodedImageFormat::kHEIF:
+// QTI_END: 2025-05-22: Video: Skia: Temporarily fallback HEIF decoding path to legacy libheif
         case SkEncodedImageFormat::kAVIF:
             return std::make_unique<SkSampledCodec>(codec.release());
         case SkEncodedImageFormat::kGIF:
@@ -537,6 +539,7 @@ SkCodec::Result SkAndroidCodec::getAndroidPixels(const SkImageInfo& info, void* 
 
 bool SkAndroidCodec::getGainmapAndroidCodec(SkGainmapInfo* info,
                                             std::unique_ptr<SkAndroidCodec>* outCodec) {
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
     SkCodec *tCodec = fCodec.get();
     std::unique_ptr<SkCodec> skCodec = nullptr;
     auto imageFormat = fCodec->getEncodedFormat();
@@ -548,15 +551,20 @@ bool SkAndroidCodec::getGainmapAndroidCodec(SkGainmapInfo* info,
         }
     }
 
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
     if (outCodec) {
         std::unique_ptr<SkCodec> gainmapCodec;
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
         if (!tCodec->onGetGainmapCodec(info, &gainmapCodec)) {
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
             return false;
         }
         *outCodec = MakeFromCodec(std::move(gainmapCodec));
         return true;
     }
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
     return tCodec->onGetGainmapCodec(info, nullptr);
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
 }
 
 bool SkAndroidCodec::getAndroidGainmap(SkGainmapInfo* info,

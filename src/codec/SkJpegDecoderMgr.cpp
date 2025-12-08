@@ -3,9 +3,11 @@
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
+// QTI_BEGIN: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
  * Changes from Qualcomm Technologies, Inc. are provided under the following license:
  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
+// QTI_END: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
  */
 
 #include "src/codec/SkJpegDecoderMgr.h"
@@ -98,17 +100,17 @@ SkJpegSourceMgr* JpegDecoderMgr::getSourceMgr() {
 
 JpegDecoderMgr::JpegDecoderMgr(SkStream* stream)
         : fSrcMgr(SkJpegSourceMgr::Make(stream)), fInit(false) {
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
 #ifdef QC_JPEG_MT
     memset(&fDInfo, 0, sizeof(jpeg_decompress_struct));
 #endif
-    /* QTI_END */
+// QTI_END: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
     // An error manager must be set before any calls to libjpeg, in order to handle failures.
     fDInfo.err = jpeg_std_error(&fErrorMgr);
     fErrorMgr.error_exit = skjpeg_err_exit;
 }
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
 #ifdef QC_JPEG_MT
 qcJpegDecoder_Interface QCJPEG_DECODER;
 void qcJpegDecoderInit() {
@@ -138,8 +140,8 @@ void qcJpegDecoderInit() {
     }
 }
 #endif
-/* QTI_END */
 
+// QTI_END: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
 void JpegDecoderMgr::init() {
     jpeg_create_decompress(&fDInfo);
     fInit = true;
@@ -147,27 +149,27 @@ void JpegDecoderMgr::init() {
     fDInfo.err->output_message = &output_message;
     fDInfo.progress = &fProgressMgr;
     fProgressMgr.progress_monitor = &progress_monitor;
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
 #ifdef QC_JPEG_MT
     pthread_once(&(QCJPEG_DECODER.mInitControl), qcJpegDecoderInit);
     if (QCJPEG_DECODER.mAllSymbolsFound) {
         mQcJpeghandler = QCJPEG_DECODER.mQcJpegInit(&fDInfo, sizeof(SourceMgr));
     }
 #endif
-    /* QTI_END */
+// QTI_END: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
 }
 
 JpegDecoderMgr::~JpegDecoderMgr() {
     if (fInit) {
         jpeg_destroy_decompress(&fDInfo);
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
 #ifdef QC_JPEG_MT
         if (QCJPEG_DECODER.mAllSymbolsFound && mQcJpeghandler) {
             QCJPEG_DECODER.mQcJpegDestroy(mQcJpeghandler);
             mQcJpeghandler = nullptr;
         }
 #endif
-        /* QTI_END */
+// QTI_END: 2025-04-28: Performance: Perf: Add QC support for jpeg decode multithread.
     }
 }
 

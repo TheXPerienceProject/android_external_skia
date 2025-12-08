@@ -68,7 +68,9 @@ private:
      * Called only by NewFromStream
      */
     SkHeifCodec(SkEncodedInfo&&, HeifDecoder*, SkEncodedOrigin, bool animation,
+// QTI_BEGIN: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
             SkEncodedImageFormat,  std::unique_ptr<SkStream>);
+// QTI_END: 2025-07-08: Video: Skia: create SkCrabbyAvifCodec for gainmap decoding
 
     void initializeSwizzler(const SkImageInfo& dstInfo, const Options& options);
     void allocateStorage(const SkImageInfo& dstInfo);
